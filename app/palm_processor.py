@@ -227,6 +227,12 @@ class PalmProcessor:
         return self._run_inference(processed)
 
     def get_embedding_from_notebook_frame(self, frame_rgb: np.ndarray):
+        # When rembg is disabled, the threshold-based notebook preprocessing
+        # produces garbage (thresholds entire scene, not just hand). Fall back
+        # to MediaPipe-based ROI extraction which works reliably.
+        if not self.notebook_preprocessor.rembg_enabled:
+            return self.get_embedding(frame_rgb)
+
         result = self.notebook_preprocessor.extract_full_hand_roi(frame_rgb)
         if result is None:
             return None
