@@ -820,9 +820,13 @@ function updateRegistrationUI() {
   const count = state.capturedSamples.length;
   const sample = USB_REGISTRATION_SAMPLES[Math.min(index, USB_REGISTRATION_SAMPLES.length - 1)];
 
-  $('regSampleTitle').textContent = sample.title;
-  $('regSampleDesc').textContent = sample.desc;
-  $('captureCounter').textContent = `${count} / 7`;
+  const sampleTitle = $('regSampleTitle');
+  const sampleDesc = $('regSampleDesc');
+  const captureCounter = $('captureCounter');
+
+  if (sampleTitle) sampleTitle.textContent = sample.title;
+  if (sampleDesc) sampleDesc.textContent = sample.desc;
+  if (captureCounter) captureCounter.textContent = `${count} / 7`;
 
   document.querySelectorAll('#captureDots .dot').forEach((dot, i) =>
     dot.classList.toggle('filled', i < count)
@@ -831,15 +835,17 @@ function updateRegistrationUI() {
   renderQualityList(state.lastGuidance);
 
   const active = state.registrationActive;
-  const hasName = userName.value.trim().length > 0;
-  btnStartRegistration.disabled = active || !hasName;
-  btnCaptureSample.disabled = !active || !(state.lastGuidance?.acceptable);
-  btnFinalizeRegistration.disabled = !active || count < 7;
-  btnCancelRegistration.disabled = !active;
+  const hasName = userName?.value?.trim()?.length > 0;
+  if (btnStartRegistration) btnStartRegistration.disabled = active || !hasName;
+  if (btnCaptureSample) btnCaptureSample.disabled = !active || !(state.lastGuidance?.acceptable);
+  if (btnFinalizeRegistration) btnFinalizeRegistration.disabled = !active || count < 7;
+  if (btnCancelRegistration) btnCancelRegistration.disabled = !active;
 }
 
 function renderQualityList(guidance) {
   const list = $('qualityList');
+  if (!list) return;
+
   if (!state.registrationActive) {
     list.innerHTML = '<li><span>Status</span><strong class="neutral">Enter name to start</strong></li>';
     return;
@@ -882,6 +888,7 @@ function resetRegistration() {
 
 function setFeedback(msg, type) {
   const el = $('registerFeedback');
+  if (!el) return;
   el.textContent = msg;
   el.className = `register-feedback ${type}`;
 }
@@ -896,20 +903,26 @@ function updateHandGuideOverlay(metrics) {
   const palmGuide = $('palmGuideReg');
   const metricsDisplay = $('guidanceMetrics');
 
+  // Early return if elements don't exist
+  if (!overlay || !sizeRing) return;
+
   if (!metrics || !metrics.hand_detected) {
     overlay.style.opacity = '0.3';
     sizeRing.setAttribute('stroke', 'var(--text-muted)');
-    palmGuide.style.opacity = '1';
+    if (palmGuide) palmGuide.style.opacity = '1';
     if (metricsDisplay) {
-      $('metricSize').querySelector('strong').textContent = '--';
-      $('metricRotation').querySelector('strong').textContent = '--';
-      $('metricPosition').querySelector('strong').textContent = '--';
+      const metricSize = $('metricSize');
+      const metricRotation = $('metricRotation');
+      const metricPosition = $('metricPosition');
+      if (metricSize) metricSize.querySelector('strong').textContent = '--';
+      if (metricRotation) metricRotation.querySelector('strong').textContent = '--';
+      if (metricPosition) metricPosition.querySelector('strong').textContent = '--';
     }
     return;
   }
 
   overlay.style.opacity = '1';
-  palmGuide.style.opacity = '0';
+  if (palmGuide) palmGuide.style.opacity = '0';
 
   const target = SAMPLE_TARGETS[Math.min(state.currentSampleIndex, SAMPLE_TARGETS.length - 1)];
 
@@ -962,9 +975,9 @@ function updateHandGuideOverlay(metrics) {
   }
 }
 
-userName.addEventListener('input', () => {
+userName?.addEventListener('input', () => {
   const hasName = userName.value.trim().length > 0;
-  btnStartRegistration.disabled = state.registrationActive || !hasName;
+  if (btnStartRegistration) btnStartRegistration.disabled = state.registrationActive || !hasName;
 });
 
 // ── Access Log ───────────────────────────────────────────────────
