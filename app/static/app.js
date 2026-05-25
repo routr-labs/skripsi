@@ -35,6 +35,9 @@ const state = {
   autoMode: true,
   usbDeviceMode: false,
   usbScanEventSource: null,
+  usbPreviewTimer: null,
+  usbPreviewBusy: false,
+  usbPreviewObjectUrl: null,
   // Registration state
   registrationActive: false,
   registrationStatusTimer: null,
@@ -409,10 +412,28 @@ function startUsbPreview() {
     $('cameraFrame').prepend(preview);
   }
 
-  preview.src = '/api/device-registration/preview.mjpg';
-  if (usbRegistrationPreview) {
-    usbRegistrationPreview.src = '/api/device-registration/preview.mjpg';
-  }
+  const updatePreview = async () => {
+    if (state.usbPreviewBusy) return;
+    state.usbPreviewBusy = true;
+    try {
+      const res = await fetch(`/api/device-registration/preview.jpg?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const nextUrl = URL.createObjectURL(blob);
+      preview.src = nextUrl;
+      if (usbRegistrationPreview) usbRegistrationPreview.src = nextUrl;
+      if (state.usbPreviewObjectUrl) URL.revokeObjectURL(state.usbPreviewObjectUrl);
+      state.usbPreviewObjectUrl = nextUrl;
+    } catch (err) {
+      console.warn('[PalmAccess] USB preview update failed', err);
+    } finally {
+      state.usbPreviewBusy = false;
+    }
+  };
+
+  updatePreview();
+  if (state.usbPreviewTimer) clearInterval(state.usbPreviewTimer);
+  state.usbPreviewTimer = setInterval(updatePreview, 150);
   $('cameraStatus').innerHTML = '<span class="cam-dot"></span>USB camera active';
 }
 
@@ -1180,7 +1201,6 @@ const esc = (s) =>
       if (videoReg) videoReg.style.display = 'none';
       if (usbRegistrationPreview) {
         usbRegistrationPreview.style.display = 'block';
-        usbRegistrationPreview.src = '/api/device-registration/preview.mjpg';
       }
     }
 

@@ -126,7 +126,15 @@ class DeviceRuntime:
         frame = self._latest_frame_copy()
         if frame is None:
             return None
-        ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        h, w = frame.shape[:2]
+        if w > 640:
+            scale = 640 / w
+            frame = cv2.resize(frame, (640, int(h * scale)), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(
+            ".jpg",
+            cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+            [int(cv2.IMWRITE_JPEG_QUALITY), 70],
+        )
         if not ok:
             return None
         return encoded.tobytes()
