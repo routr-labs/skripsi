@@ -1,9 +1,12 @@
 from dataclasses import dataclass
+import logging
 
 import cv2
 import numpy as np
 
 from app.config import CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID, IMG_SIZE, NOTEBOOK_REMBG_MODEL
+
+log = logging.getLogger("palmgate")
 
 
 @dataclass(frozen=True)
@@ -178,21 +181,28 @@ class NotebookPreprocessor:
 
     def extract_full_hand_roi(self, frame_rgb: np.ndarray) -> NotebookPreprocessResult | None:
         if frame_rgb.size == 0 or float(frame_rgb.mean()) < 5:
+            log.warning("NOTEBOOK | frame rejected: empty or too dark")
             return None
 
         gray = self._prepare_hand_mask_input(frame_rgb)
         mask = self._threshold_hand(gray)
         contour = self._find_largest_contour(mask)
         if contour is None:
+            log.warning("NOTEBOOK | no contour found in mask")
             return None
+
+        log.info("NOTEBOOK | contour found, area=%.0f", cv2.contourArea(contour))
 
         calculated = self._calculate_roi(mask, gray, contour)
         if calculated is None:
+            log.warning("NOTEBOOK | ROI calculation failed (FFT valley detection)")
             return None
 
         roi, bbox, rotation_degrees = calculated
         h, w = roi.shape[:2]
+        log.info("NOTEBOOK | ROI extracted: %dx%d, rotation=%.1f°", w, h, rotation_degrees)
         if h < 50 or w < 50:
+            log.warning("NOTEBOOK | ROI too small: %dx%d", w, h)
             return None
 
         model_input = self.preprocess_roi_to_model_input(roi)
