@@ -102,6 +102,7 @@ class DeviceRuntime:
         self.last_recognition_at = None
         self.worker_state = "running"
         self.registration_session = None
+        self._registration_lock = threading.Lock()
         self.scan_state = {"stage": "starting", "metrics": None}
         self.latest_frame = None
         self._frame_lock = threading.Lock()
@@ -151,106 +152,112 @@ class DeviceRuntime:
         return encoded.tobytes()
 
     def start_registration(self, nim: str, name: str):
-        if self.registration_session is not None:
-            raise RuntimeError("Registration already active")
         clean_nim = nim.strip()
         clean_name = name.strip()
         if not clean_nim:
             raise RuntimeError("NIM is required")
         if not clean_name:
             raise RuntimeError("Name is required")
-        self.registration_session = DeviceRegistrationSession(
-            id=str(uuid.uuid4()),
-            nim=clean_nim,
-            name=clean_name,
-        )
-        self.worker_state = "registration_active"
-        self.hand_seen_since_ms = None
-        self.cooldown_until_ms = 0
-        return self.registration_session
+        with self._registration_lock:
+            if self.registration_session is not None:
+                raise RuntimeError("Registration already active")
+            self.registration_session = DeviceRegistrationSession(
+                id=str(uuid.uuid4()),
+                nim=clean_nim,
+                name=clean_name,
+            )
+            self.worker_state = "registration_active"
+            self.hand_seen_since_ms = None
+            self.cooldown_until_ms = 0
+            return self.registration_session
 
     def cancel_registration(self):
-        self.registration_session = None
-        self.worker_state = "running"
+        with self._registration_lock:
+            self.registration_session = None
+            self.worker_state = "running"
 
     def capture_registration_sample(self):
-        if self.registration_session is None:
-            raise RuntimeError("No registration active")
-        if self.registration_session.current_sample_index >= REGISTRATION_TOTAL_CAPTURES:
-            raise RuntimeError("All registration samples captured")
-        guidance = self.registration_session.last_guidance
-        if not guidance or not guidance.get("acceptable", False):
-            raise RuntimeError("Frame does not satisfy guidance")
-        frame = self._read_frame()
-        embedding = self.palm_processor.get_embedding_from_notebook_frame(
-            frame,
-            tta_enabled=ENROLLMENT_TTA_ENABLED,
-        )
-        if embedding is None:
-            raise RuntimeError("Palm preprocessing failed")
-        sample_index = self.registration_session.current_sample_index
-        sample = {
-            "sample_index": sample_index,
-            "hand": self._hand_for_sample_index(sample_index),
-            "quality_score": float(guidance.get("score", 1.0)),
-            "embedding": embedding,
-        }
-        self.registration_session.captured_samples.append(sample)
-        self.registration_session.current_sample_index += 1
-        return sample
+        with self._registration_lock:
+            if self.registration_session is None:
+                raise RuntimeError("No registration active")
+            if self.registration_session.current_sample_index >= REGISTRATION_TOTAL_CAPTURES:
+                raise RuntimeError("All registration samples captured")
+            guidance = self.registration_session.last_guidance
+            if not guidance or not guidance.get("acceptable", False):
+                raise RuntimeError("Frame does not satisfy guidance")
+            sample_index = self.registration_session.current_sample_index
+
+            frame = self._read_frame()
+            embedding = self.palm_processor.get_embedding_from_notebook_frame(
+                frame,
+                tta_enabled=ENROLLMENT_TTA_ENABLED,
+            )
+            if embedding is None:
+                raise RuntimeError("Palm preprocessing failed")
+            sample = {
+                "sample_index": sample_index,
+                "hand": self._hand_for_sample_index(sample_index),
+                "quality_score": float(guidance.get("score", 1.0)),
+                "embedding": embedding,
+            }
+            self.registration_session.captured_samples.append(sample)
+            self.registration_session.current_sample_index += 1
+            self.registration_session.last_guidance = None
+            return sample
 
     def finalize_registration(self):
-        if self.registration_session is None:
-            raise RuntimeError("No registration active")
+        with self._registration_lock:
+            if self.registration_session is None:
+                raise RuntimeError("No registration active")
 
-        samples = []
-        for item in self.registration_session.captured_samples:
-            samples.append({
-                "hand": item.get("hand", self._hand_for_sample_index(item["sample_index"])),
-                "embedding": item["embedding"],
-            })
+            samples = []
+            for item in self.registration_session.captured_samples:
+                samples.append({
+                    "hand": item.get("hand", self._hand_for_sample_index(item["sample_index"])),
+                    "embedding": item["embedding"],
+                })
 
-        try:
-            templates = build_hand_templates(
-                samples,
-                required_hands=REGISTRATION_HANDS,
-                min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
-            )
-        except ValueError:
-            raise RuntimeError("Not enough valid registration samples")
+            try:
+                templates = build_hand_templates(
+                    samples,
+                    required_hands=REGISTRATION_HANDS,
+                    min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
+                )
+            except ValueError:
+                raise RuntimeError("Not enough valid registration samples")
 
-        embedding_hands = list(templates.keys())
-        embeddings = [templates[hand].astype(np.float32) for hand in embedding_hands]
-        avg_embedding = overall_template(templates)
+            embedding_hands = list(templates.keys())
+            embeddings = [templates[hand].astype(np.float32) for hand in embedding_hands]
+            avg_embedding = overall_template(templates)
 
-        stored = self.db.get_all_embeddings()
-        for embedding in embeddings:
-            duplicate = self.palm_processor.compute_similarity(embedding, stored, DUPLICATE_THRESHOLD)
-            if duplicate["status"] == "ALLOWED":
-                raise RuntimeError(f"This palm is already registered as '{duplicate['name']}'")
+            stored = self.db.get_all_embeddings()
+            for embedding in embeddings:
+                duplicate = self.palm_processor.compute_similarity(embedding, stored, DUPLICATE_THRESHOLD)
+                if duplicate["status"] == "ALLOWED":
+                    raise RuntimeError(f"This palm is already registered as '{duplicate['name']}'")
 
-        try:
-            user_id = self.db.add_user(
-                self.registration_session.name,
-                avg_embedding,
-                nim=self.registration_session.nim,
-                individual_embeddings=embeddings,
-                embedding_hands=embedding_hands,
-            )
-        except ValueError as exc:
-            raise RuntimeError(str(exc))
+            try:
+                user_id = self.db.add_user(
+                    self.registration_session.name,
+                    avg_embedding,
+                    nim=self.registration_session.nim,
+                    individual_embeddings=embeddings,
+                    embedding_hands=embedding_hands,
+                )
+            except ValueError as exc:
+                raise RuntimeError(str(exc))
 
-        nim = self.registration_session.nim
-        name = self.registration_session.name
-        self.registration_session = None
-        self.worker_state = "running"
-        return {
-            "user_id": user_id,
-            "nim": nim,
-            "name": name,
-            "stored_embeddings": len(embeddings),
-            "hands": {hand: embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
-        }
+            nim = self.registration_session.nim
+            name = self.registration_session.name
+            self.registration_session = None
+            self.worker_state = "running"
+            return {
+                "user_id": user_id,
+                "nim": nim,
+                "name": name,
+                "stored_embeddings": len(embeddings),
+                "hands": {hand: embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
+            }
 
     def tick(self):
         now_ms = self.clock.now()
@@ -266,26 +273,27 @@ class DeviceRuntime:
             )
             self.last_heartbeat_ms = now_ms
 
-        if self.registration_session is not None:
-            frame = self._read_frame()
-            previous_metrics = None
-            if self.registration_session.last_guidance:
-                previous_metrics = self.registration_session.last_guidance.get("metrics")
-            metrics = self.palm_processor.get_registration_guidance_metrics(frame, previous_metrics)
-            sample_index = min(self.registration_session.current_sample_index, REGISTRATION_TOTAL_CAPTURES - 1)
-            target_index = self._target_index_for_sample_index(sample_index)
-            guidance = evaluate_guidance(target_index, metrics)
-            target = SAMPLE_TARGETS[target_index]
-            self.registration_session.last_guidance = {
-                "target": target.key,
-                "label": target.label,
-                "acceptable": guidance.acceptable,
-                "failures": guidance.failures,
-                "blockers": guidance.blockers,
-                "score": guidance.score,
-                "metrics": metrics,
-            }
-            return None
+        with self._registration_lock:
+            if self.registration_session is not None:
+                frame = self._read_frame()
+                previous_metrics = None
+                if self.registration_session.last_guidance:
+                    previous_metrics = self.registration_session.last_guidance.get("metrics")
+                metrics = self.palm_processor.get_registration_guidance_metrics(frame, previous_metrics)
+                sample_index = min(self.registration_session.current_sample_index, REGISTRATION_TOTAL_CAPTURES - 1)
+                target_index = self._target_index_for_sample_index(sample_index)
+                guidance = evaluate_guidance(target_index, metrics)
+                target = SAMPLE_TARGETS[target_index]
+                self.registration_session.last_guidance = {
+                    "target": target.key,
+                    "label": target.label,
+                    "acceptable": guidance.acceptable,
+                    "failures": guidance.failures,
+                    "blockers": guidance.blockers,
+                    "score": guidance.score,
+                    "metrics": metrics,
+                }
+                return None
 
         if now_ms < self.cooldown_until_ms:
             self.scan_state = {

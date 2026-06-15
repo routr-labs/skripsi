@@ -522,7 +522,15 @@ def test_capture_registration_sample_uses_guidance_score():
     assert sample["sample_index"] == 0
     assert sample["hand"] == "left"
     assert sample["quality_score"] == 0.85
+    assert runtime.registration_session.last_guidance is None
     np.testing.assert_array_equal(sample["embedding"], np.ones(4, dtype=np.float32))
+
+    try:
+        runtime.capture_registration_sample()
+    except RuntimeError as exc:
+        assert "guidance" in str(exc)
+    else:
+        raise AssertionError("Expected stale guidance to be rejected")
 
 
 def test_capture_registration_sample_tags_first_five_left_next_five_right():
@@ -538,9 +546,11 @@ def test_capture_registration_sample_tags_first_five_left_next_five_right():
 
     runtime = DeviceRuntime(camera=FakeCamera(), palm_processor=FakeProcessor(), db=None)
     runtime.start_registration("12345", "Alice")
-    runtime.registration_session.last_guidance = {"acceptable": True, "score": 1.0}
 
-    samples = [runtime.capture_registration_sample() for _ in range(10)]
+    samples = []
+    for _ in range(10):
+        runtime.registration_session.last_guidance = {"acceptable": True, "score": 1.0}
+        samples.append(runtime.capture_registration_sample())
 
     assert [sample["hand"] for sample in samples] == ["left"] * 5 + ["right"] * 5
 
