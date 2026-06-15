@@ -59,12 +59,14 @@ def _registration_progress(session) -> dict:
 
 @router.post("/start", response_model=StartRegistrationResponse)
 async def start_registration(req: StartRegistrationRequest):
-    if not req.nim.strip():
+    nim = req.nim.strip()
+    name = req.name.strip()
+    if not nim:
         raise HTTPException(status_code=400, detail="NIM is required")
-    if not req.name.strip():
+    if not name:
         raise HTTPException(status_code=400, detail="Name is required")
     try:
-        session = _runtime().start_registration(req.nim, req.name)
+        session = _runtime().start_registration(nim, name)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return StartRegistrationResponse(

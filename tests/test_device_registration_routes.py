@@ -51,7 +51,7 @@ def test_start_device_registration_returns_session(monkeypatch):
     monkeypatch.setattr(main, "device_runtime", runtime)
     client = TestClient(app)
 
-    response = client.post("/api/device-registration/start", json={"nim": "12345", "name": "Alice"})
+    response = client.post("/api/device-registration/start", json={"nim": " 12345 ", "name": " Alice "})
 
     assert response.status_code == 200
     data = response.json()
