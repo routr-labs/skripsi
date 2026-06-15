@@ -4,13 +4,15 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+DEFAULT_MODEL_DIR = BASE_DIR / "models" / "embedding"
 DEFAULT_MODEL_FILENAME = "palm_embedding.tflite"
+DEFAULT_MODEL_METADATA_FILENAME = "model_metadata.json"
 DEFAULT_SIMILARITY_THRESHOLD = 0.745932400226593
 DEFAULT_EMBEDDING_DIM = 128
 DEFAULT_TTA_ROTATIONS = (0.0, -6.0, 6.0)
 
-MODEL_PATH = Path(os.getenv("MODEL_PATH", str(BASE_DIR / DEFAULT_MODEL_FILENAME)))
-MODEL_METADATA_PATH = Path(os.getenv("MODEL_METADATA_PATH", str(BASE_DIR / "model_metadata.json")))
+MODEL_PATH = Path(os.getenv("MODEL_PATH", str(DEFAULT_MODEL_DIR / DEFAULT_MODEL_FILENAME)))
+MODEL_METADATA_PATH = Path(os.getenv("MODEL_METADATA_PATH", str(DEFAULT_MODEL_DIR / DEFAULT_MODEL_METADATA_FILENAME)))
 HAND_LANDMARKER_PATH = BASE_DIR / "hand_landmarker.task"
 
 

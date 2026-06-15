@@ -34,8 +34,9 @@ def test_usb_compose_uses_separate_preview_and_processing_intervals():
     assert "DEVICE_FRAME_INTERVAL_MS=1000" not in compose
 
 
-def test_compose_mounts_embedding_model():
+def test_compose_mounts_embedding_model_directory():
     compose = Path("docker-compose.yml").read_text()
 
-    assert "palm_embedding.tflite" in compose
+    assert "./models/embedding:/app/models/embedding:ro" in compose
+    assert "./palm_embedding.tflite:/app/palm_embedding.tflite" not in compose
     assert "palm_recognition.tflite:/app/palm_recognition.tflite" not in compose

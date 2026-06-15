@@ -64,9 +64,10 @@ USB registration captures 5 samples per hand, stores one normalized template per
 
 ## Required Model Files
 
-Place in project root:
-- `palm_embedding.tflite` - EfficientNetB0 128-d embedding model
-- `hand_landmarker.task` - MediaPipe hand detection model
+Place model files at:
+- `models/embedding/palm_embedding.tflite` - EfficientNetB0 128-d embedding model
+- `models/embedding/model_metadata.json` - optional threshold/metadata file
+- `hand_landmarker.task` in project root - MediaPipe hand detection model
 
 ## Database Migration
 

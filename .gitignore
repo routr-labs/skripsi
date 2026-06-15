@@ -29,18 +29,15 @@ htmlcov/
 .cursor/
 
 # Jupyter
-*.ipynb
 .ipynb_checkpoints/
 
 # Database (runtime data, not source)
-palmprint.db
 *.sqlite
 *.sqlite3
 
 # ML model files (large binaries — store separately, not in git)
-# *.tflite
 *.tflite.bak
-# *.task
+*.task
 *.h5
 *.pb
 *.onnx
@@ -60,5 +57,7 @@ desktop.ini
 .env.*
 !.env.example
 
+# Unnecessary / local things
+docs/
 Dataset*/
 seeds/

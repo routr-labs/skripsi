@@ -7,8 +7,8 @@ Web-based palmprint recognition app that now supports two operating modes:
 ## Requirements
 
 - Python 3.10+
-- `palm_embedding.tflite` in the project root
-- `model_metadata.json` in the project root if available
+- `models/embedding/palm_embedding.tflite`
+- `models/embedding/model_metadata.json` if available
 - `hand_landmarker.task` in the project root
 
 ## Setup

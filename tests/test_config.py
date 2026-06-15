@@ -43,7 +43,8 @@ def test_embedding_model_defaults(monkeypatch):
     import app.config as config
     importlib.reload(config)
 
-    assert config.MODEL_PATH.name == "palm_embedding.tflite"
+    assert config.MODEL_PATH == config.BASE_DIR / "models" / "embedding" / "palm_embedding.tflite"
+    assert config.MODEL_METADATA_PATH == config.BASE_DIR / "models" / "embedding" / "model_metadata.json"
     assert config.EMBEDDING_DIM == 128
     assert config.SIMILARITY_THRESHOLD == 0.745932400226593
     assert config.TTA_ROTATIONS == (0.0, -6.0, 6.0)
