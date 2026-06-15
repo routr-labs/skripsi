@@ -6,8 +6,6 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.config import REGISTRATION_CAPTURES_PER_HAND, REGISTRATION_HANDS, REGISTRATION_TOTAL_CAPTURES
-
 router = APIRouter(prefix="/api/device-registration")
 
 
@@ -37,26 +35,6 @@ def _runtime():
     return device_runtime
 
 
-def _hand_for_sample_index(index: int) -> str:
-    hand_index = index // REGISTRATION_CAPTURES_PER_HAND
-    return REGISTRATION_HANDS[min(hand_index, len(REGISTRATION_HANDS) - 1)]
-
-
-def _registration_progress(session) -> dict:
-    counts = {hand: 0 for hand in REGISTRATION_HANDS}
-    for i, sample in enumerate(session.captured_samples):
-        hand = sample.get("hand", _hand_for_sample_index(i))
-        if hand in counts:
-            counts[hand] += 1
-    return {
-        "required_per_hand": REGISTRATION_CAPTURES_PER_HAND,
-        "total_required": REGISTRATION_TOTAL_CAPTURES,
-        "current_hand": _hand_for_sample_index(session.current_sample_index),
-        "left_count": counts.get("left", 0),
-        "right_count": counts.get("right", 0),
-    }
-
-
 @router.post("/start", response_model=StartRegistrationResponse)
 async def start_registration(req: StartRegistrationRequest):
     nim = req.nim.strip()
@@ -65,17 +43,23 @@ async def start_registration(req: StartRegistrationRequest):
         raise HTTPException(status_code=400, detail="NIM is required")
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
+    runtime = _runtime()
     try:
-        session = _runtime().start_registration(nim, name)
+        runtime.start_registration(nim, name)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    status = runtime.get_registration_status()
     return StartRegistrationResponse(
-        session_id=session.id,
-        nim=session.nim,
-        name=session.name,
-        current_sample_index=session.current_sample_index,
-        captured_count=len(session.captured_samples),
-        **_registration_progress(session),
+        session_id=status["session_id"],
+        nim=status["nim"],
+        name=status["name"],
+        current_sample_index=status["current_sample_index"],
+        captured_count=status["captured_count"],
+        required_per_hand=status["required_per_hand"],
+        total_required=status["total_required"],
+        current_hand=status["current_hand"],
+        left_count=status["left_count"],
+        right_count=status["right_count"],
     )
 
 

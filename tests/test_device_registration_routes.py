@@ -36,8 +36,8 @@ def test_start_device_registration_returns_session(monkeypatch):
         id = "session-1"
         nim = "12345"
         name = "Alice"
-        current_sample_index = 0
-        captured_samples = []
+        current_sample_index = 9
+        captured_samples = [{"hand": "right"} for _ in range(9)]
 
     class FakeRuntime:
         def __init__(self):
@@ -46,6 +46,23 @@ def test_start_device_registration_returns_session(monkeypatch):
         def start_registration(self, nim, name):
             self.started = (nim, name)
             return FakeSession()
+
+        def get_registration_status(self):
+            return {
+                "active": True,
+                "worker_state": "registration_active",
+                "session_id": "session-1",
+                "nim": "12345",
+                "name": "Alice",
+                "current_sample_index": 0,
+                "captured_count": 0,
+                "guidance": None,
+                "required_per_hand": 5,
+                "total_required": 10,
+                "current_hand": "left",
+                "left_count": 0,
+                "right_count": 0,
+            }
 
     runtime = FakeRuntime()
     monkeypatch.setattr(main, "device_runtime", runtime)
