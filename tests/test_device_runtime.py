@@ -599,6 +599,41 @@ def test_finalize_registration_stores_one_template_per_hand():
     assert runtime.worker_state == "running"
 
 
+def test_finalize_registration_preserves_add_user_value_error_cause():
+    from app.device_runtime import DeviceRuntime
+
+    class FakeProcessor:
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.1}
+
+    class FakeDB:
+        def get_all_embeddings(self):
+            return []
+
+        def add_user(self, *args, **kwargs):
+            raise ValueError("NIM already exists")
+
+    runtime = DeviceRuntime(camera=None, palm_processor=FakeProcessor(), db=FakeDB())
+    runtime.start_registration("12345", "Alice")
+    runtime.registration_session.captured_samples = [
+        {
+            "sample_index": i,
+            "hand": "left" if i < 5 else "right",
+            "quality_score": 1.0,
+            "embedding": np.array([1.0, 0.0], dtype=np.float32) if i < 5 else np.array([0.0, 1.0], dtype=np.float32),
+        }
+        for i in range(10)
+    ]
+
+    try:
+        runtime.finalize_registration()
+    except RuntimeError as exc:
+        assert "NIM already exists" in str(exc)
+        assert isinstance(exc.__cause__, ValueError)
+    else:
+        raise AssertionError("Expected add_user ValueError to be wrapped")
+
+
 def test_finalize_registration_requires_five_valid_samples_per_hand():
     from app.device_runtime import DeviceRuntime
 
@@ -629,6 +664,7 @@ def test_finalize_registration_requires_five_valid_samples_per_hand():
         runtime.finalize_registration()
     except RuntimeError as exc:
         assert "Not enough valid registration samples" in str(exc)
+        assert isinstance(exc.__cause__, ValueError)
     else:
         raise AssertionError("Expected incomplete registration rejection")
 

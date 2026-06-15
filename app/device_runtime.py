@@ -223,8 +223,8 @@ class DeviceRuntime:
                     required_hands=REGISTRATION_HANDS,
                     min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
                 )
-            except ValueError:
-                raise RuntimeError("Not enough valid registration samples")
+            except ValueError as exc:
+                raise RuntimeError("Not enough valid registration samples") from exc
 
             embedding_hands = list(templates.keys())
             embeddings = [templates[hand].astype(np.float32) for hand in embedding_hands]
@@ -245,7 +245,7 @@ class DeviceRuntime:
                     embedding_hands=embedding_hands,
                 )
             except ValueError as exc:
-                raise RuntimeError(str(exc))
+                raise RuntimeError(str(exc)) from exc
 
             nim = self.registration_session.nim
             name = self.registration_session.name
