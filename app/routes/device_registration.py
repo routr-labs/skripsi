@@ -47,7 +47,7 @@ async def start_registration(req: StartRegistrationRequest):
     try:
         runtime.start_registration(nim, name)
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     status = runtime.get_registration_status()
     return StartRegistrationResponse(
         session_id=status["session_id"],
@@ -120,7 +120,10 @@ async def finalize_registration():
 
 @router.post("/cancel")
 async def cancel_registration():
-    _runtime().cancel_registration()
+    try:
+        _runtime().cancel_registration()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"success": True}
 
 

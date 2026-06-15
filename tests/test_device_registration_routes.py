@@ -29,6 +29,27 @@ def test_start_registration_requires_nim(monkeypatch):
     assert "NIM is required" in response.json()["detail"]
 
 
+def test_start_registration_preserves_runtime_error_cause(monkeypatch):
+    import asyncio
+    import app.main as main
+    from fastapi import HTTPException
+    from app.routes.device_registration import StartRegistrationRequest, start_registration
+
+    class FakeRuntime:
+        def start_registration(self, nim, name):
+            raise RuntimeError("Registration already active")
+
+    monkeypatch.setattr(main, "device_runtime", FakeRuntime())
+
+    try:
+        asyncio.run(start_registration(StartRegistrationRequest(nim="12345", name="Alice")))
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert isinstance(exc.__cause__, RuntimeError)
+    else:
+        raise AssertionError("Expected HTTPException")
+
+
 def test_start_device_registration_returns_session(monkeypatch):
     import app.main as main
 
@@ -363,3 +384,19 @@ def test_cancel_endpoint_cancels_session(monkeypatch):
 
     assert response.status_code == 200
     assert runtime.cancelled is True
+
+
+def test_cancel_endpoint_returns_409_on_runtime_error(monkeypatch):
+    import app.main as main
+
+    class FakeRuntime:
+        def cancel_registration(self):
+            raise RuntimeError("No registration active")
+
+    monkeypatch.setattr(main, "device_runtime", FakeRuntime())
+    client = TestClient(app)
+
+    response = client.post("/api/device-registration/cancel")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "No registration active"
