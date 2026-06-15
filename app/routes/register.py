@@ -1,3 +1,5 @@
+import binascii
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -56,8 +58,8 @@ async def register(req: RegisterRequest):
     for i, img_b64 in enumerate(req.images):
         try:
             frame = decode_base64_image(img_b64)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid image at index {i}")
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid image at index {i}") from exc
 
         if req.is_roi:
             emb = palm_processor.get_embedding_from_roi(
@@ -82,7 +84,7 @@ async def register(req: RegisterRequest):
             min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     embedding_hands = list(templates.keys())
     template_embeddings = [templates[hand] for hand in embedding_hands]
@@ -108,6 +110,6 @@ async def register(req: RegisterRequest):
             embedding_hands=embedding_hands,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return RegisterResponse(success=True, user_id=user_id, name=req.name.strip())

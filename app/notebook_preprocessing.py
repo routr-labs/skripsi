@@ -1,3 +1,9 @@
+"""Legacy rembg/FFT ROI preprocessing kept for notebook reference only.
+
+Do not use this path for production registration or recognition. The active
+runtime implementation is MediaPipe ROI extraction in app.palm_processor.
+"""
+
 from dataclasses import dataclass
 import logging
 
