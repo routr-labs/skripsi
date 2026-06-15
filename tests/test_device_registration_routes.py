@@ -66,6 +66,7 @@ def test_start_device_registration_returns_session(monkeypatch):
 
 
 def test_device_registration_status_returns_session(monkeypatch):
+    import threading
     import app.main as main
 
     class FakeSession:
@@ -79,6 +80,7 @@ def test_device_registration_status_returns_session(monkeypatch):
     class FakeRuntime:
         worker_state = "registration_active"
         registration_session = FakeSession()
+        _registration_lock = threading.Lock()
 
     monkeypatch.setattr(main, "device_runtime", FakeRuntime())
     client = TestClient(app)
