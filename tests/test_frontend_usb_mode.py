@@ -92,6 +92,42 @@ def test_registration_ui_requires_and_sends_nim():
     assert "hasNim" in source
 
 
+def test_registration_ui_has_camera_upload_mode_tabs():
+    html = Path("app/static/index.html").read_text()
+
+    assert "id=\"registrationModeTabs\"" in html
+    assert "data-registration-mode=\"camera\"" in html
+    assert "data-registration-mode=\"upload\"" in html
+    assert "Camera capture" in html
+    assert "Upload images" in html
+    assert "id=\"cameraRegistrationPanel\"" in html
+    assert "id=\"uploadRegistrationPanel\"" in html
+
+
+def test_upload_registration_has_separate_left_right_pickers():
+    html = Path("app/static/index.html").read_text()
+
+    assert "id=\"uploadLeftFiles\"" in html
+    assert "id=\"uploadRightFiles\"" in html
+    assert "Left hand photos" in html
+    assert "Right hand photos" in html
+    assert "Select exactly 5 full-hand photos" in html
+    assert "id=\"btnUploadRegister\"" in html
+    assert "id=\"btnClearUploadFiles\"" in html
+
+
+def test_upload_registration_sends_full_photo_payload():
+    source = Path("app/static/app.js").read_text()
+
+    assert "async function finalizeUploadRegistration()" in source
+    assert "function fileToDataUrl(file)" in source
+    assert "uploadLeftFiles.files.length === REGISTRATION_CAPTURES_PER_HAND" in source
+    assert "uploadRightFiles.files.length === REGISTRATION_CAPTURES_PER_HAND" in source
+    assert "images: [...leftImages, ...rightImages]" in source
+    assert "hands: [...Array(REGISTRATION_CAPTURES_PER_HAND).fill('left'), ...Array(REGISTRATION_CAPTURES_PER_HAND).fill('right')]" in source
+    assert "is_roi: false" in source
+
+
 def test_browser_roi_is_not_rotated_twice():
     source = Path("app/static/app.js").read_text()
     roi_block = source[source.index("function extractClientROI") : source.index("Ring progress")]
