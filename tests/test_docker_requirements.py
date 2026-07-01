@@ -27,7 +27,7 @@ def test_env_example_selects_usb_compose_profile_by_default():
     assert "CAMERA_DEVICE_PATH=/dev/video0" in env_example
     assert "PALMGATE_MODELS_DIR=./models" in env_example
     assert "LOCK_GPIO_ENABLED=0" in env_example
-    assert "LOCK_GPIO_LINE=PC11" in env_example
+    assert "LOCK_GPIO_LINE=75" in env_example
     assert "LOCK_ACTIVE_LOW=1" in env_example
     assert "LOCK_UNLOCK_MS=2000" in env_example
 
@@ -53,7 +53,7 @@ def test_usb_compose_maps_gpiochip_for_lock_relay():
 
     assert "LOCK_GPIO_ENABLED=${LOCK_GPIO_ENABLED:-0}" in compose
     assert "LOCK_GPIO_CHIP=${LOCK_GPIO_CHIP:-/dev/gpiochip0}" in compose
-    assert "LOCK_GPIO_LINE=${LOCK_GPIO_LINE:-PC11}" in compose
+    assert "LOCK_GPIO_LINE=${LOCK_GPIO_LINE:-75}" in compose
     assert "LOCK_ACTIVE_LOW=${LOCK_ACTIVE_LOW:-1}" in compose
     assert "LOCK_UNLOCK_MS=${LOCK_UNLOCK_MS:-2000}" in compose
     assert "${LOCK_GPIO_CHIP:-/dev/gpiochip0}:${LOCK_GPIO_CHIP:-/dev/gpiochip0}" in compose
