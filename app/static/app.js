@@ -1416,6 +1416,7 @@ async function loadStats() {
 
 function updateDevFeatures() {
   document.querySelectorAll('.dev-only').forEach((el) => {
+    if (el === roiPreview && state.devFeatures) return;
     el.hidden = !state.devFeatures;
   });
   scanUploadLabel?.setAttribute('aria-disabled', String(!state.devFeatures));

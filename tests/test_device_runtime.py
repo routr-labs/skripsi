@@ -319,7 +319,7 @@ def test_runtime_tracks_scan_state_while_holding_detected_hand():
 
     class FakeProcessor:
         def get_registration_guidance_metrics(self, frame, previous_metrics=None):
-            return {"hand_detected": True, "hand_clipped": True}
+            return {"hand_detected": True, "hand_clipped": False}
 
         def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
             return np.ones(4, dtype=np.float32)
@@ -495,7 +495,7 @@ def test_runtime_scans_again_after_cooldown_with_hand_still_present():
     assert len(runtime.db.logged) == 2
 
 
-def test_runtime_starts_hold_for_detected_clipped_hand():
+def test_runtime_blocks_clipped_hand_before_recognition():
     from app.device_runtime import DeviceRuntime
 
     class FakeClock:
@@ -511,10 +511,19 @@ def test_runtime_starts_hold_for_detected_clipped_hand():
 
     class FakeProcessor:
         def get_registration_guidance_metrics(self, frame, previous_metrics=None):
-            return {"hand_detected": True, "hand_clipped": True}
+            return {
+                "hand_detected": True,
+                "hand_clipped": True,
+                "height_ratio": 0.55,
+                "rotation_degrees": 0.0,
+                "center_x_ratio": 0.5,
+                "brightness": 120.0,
+                "blur_score": 150.0,
+                "steady": True,
+            }
 
         def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
-            return np.ones(4, dtype=np.float32)
+            raise AssertionError("clipped hand must not be embedded")
 
     class FakeDB:
         def upsert_device_status(self, **kwargs):
@@ -529,7 +538,11 @@ def test_runtime_starts_hold_for_detected_clipped_hand():
     )
 
     assert runtime.tick() is None
-    assert runtime.hand_seen_since_ms == 0
+    runtime.clock.now_ms = 1200
+    assert runtime.tick() is None
+    assert runtime.hand_seen_since_ms is None
+    assert runtime.scan_state["stage"] == "scan_quality_failed"
+    assert runtime.scan_state["failures"] == ["clipping"]
 
 
 def test_runtime_does_not_recognize_without_detected_hand():

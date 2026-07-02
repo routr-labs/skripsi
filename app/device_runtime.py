@@ -23,6 +23,9 @@ from app.config import (
     REGISTRATION_HANDS,
     REGISTRATION_MIN_VALID_PER_HAND,
     SIMILARITY_THRESHOLD,
+    USB_REGISTRATION_MAX_BRIGHTNESS,
+    USB_REGISTRATION_MIN_BLUR,
+    USB_REGISTRATION_MIN_BRIGHTNESS,
 )
 from app.lock_controller import NoopLockController, build_lock_controller
 from app.services.embedding_templates import build_hand_templates, overall_template
@@ -131,6 +134,19 @@ class DeviceRuntime:
         if frame is None:
             frame = self.capture_preview_frame()
         return frame
+
+    def _scan_quality_failures(self, metrics: dict) -> list[str]:
+        # ponytail: reuse registration cutoffs; split scan thresholds if false-denies matter.
+        failures = []
+        if metrics.get("hand_clipped", False):
+            failures.append("clipping")
+        brightness = metrics.get("brightness")
+        if brightness is not None and not USB_REGISTRATION_MIN_BRIGHTNESS <= brightness <= USB_REGISTRATION_MAX_BRIGHTNESS:
+            failures.append("brightness")
+        blur_score = metrics.get("blur_score")
+        if blur_score is not None and blur_score < USB_REGISTRATION_MIN_BLUR:
+            failures.append("sharpness")
+        return failures
 
     def _selected_registration_hands(self, hands=None) -> tuple[str, ...]:
         if hands is None:
@@ -371,6 +387,16 @@ class DeviceRuntime:
         if not metrics.get("hand_detected", False):
             self.hand_seen_since_ms = None
             self.scan_state = {"stage": "waiting_for_hand", "metrics": metrics}
+            return None
+
+        quality_failures = self._scan_quality_failures(metrics)
+        if quality_failures:
+            self.hand_seen_since_ms = None
+            self.scan_state = {
+                "stage": "scan_quality_failed",
+                "metrics": metrics,
+                "failures": quality_failures,
+            }
             return None
 
         if self.hand_seen_since_ms is None:

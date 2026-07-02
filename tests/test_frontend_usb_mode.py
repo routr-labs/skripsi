@@ -306,6 +306,13 @@ def test_frontend_sends_debug_roi_and_renders_roi_preview():
     assert busy_guard.index("scanUploadFile.value = '';") < busy_guard.index("return;")
 
 
+def test_dev_features_do_not_auto_show_empty_roi_preview():
+    source = Path("app/static/app.js").read_text()
+    block = source[source.index("function updateDevFeatures") : source.index("async function loadStatus")]
+
+    assert "if (el === roiPreview && state.devFeatures) return;" in block
+
+
 def test_upload_registration_sends_upload_source():
     source = Path("app/static/app.js").read_text()
     upload_block = source[source.index("async function finalizeUploadRegistration") : source.index("function resetRegistration")]
