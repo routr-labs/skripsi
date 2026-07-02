@@ -20,6 +20,14 @@ def test_dockerfile_pins_bookworm_base_for_gpio_runtime_libs():
     assert "libgpiod2" in dockerfile
 
 
+def test_compose_passes_dotenv_values_to_palmgate_container():
+    compose = Path("docker-compose.yml").read_text()
+    common = compose[compose.index("x-palmgate-common:") : compose.index("x-cloudflared-common:")]
+
+    assert "env_file:" in common
+    assert "- .env" in common
+
+
 def test_compose_does_not_configure_old_notebook_rembg_path():
     compose = Path("docker-compose.yml").read_text()
 

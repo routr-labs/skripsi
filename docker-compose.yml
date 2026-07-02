@@ -3,6 +3,9 @@ x-palmgate-common: &palmgate-common
   container_name: palmgate
   restart: unless-stopped
 
+  env_file:
+    - .env
+
   expose:
     - "8000"
 
