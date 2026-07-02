@@ -12,6 +12,14 @@ def test_docker_requirements_use_active_runtime_dependencies():
     assert "onnxruntime" not in requirements
 
 
+def test_dockerfile_pins_bookworm_base_for_gpio_runtime_libs():
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "FROM python:3.11-slim-bookworm AS builder" in dockerfile
+    assert "FROM python:3.11-slim-bookworm\n" in dockerfile
+    assert "libgpiod2" in dockerfile
+
+
 def test_compose_does_not_configure_old_notebook_rembg_path():
     compose = Path("docker-compose.yml").read_text()
 

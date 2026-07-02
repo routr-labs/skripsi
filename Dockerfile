@@ -1,6 +1,6 @@
 # ── Build stage ───────────────────────────────────────────────────
-# python:3.11-slim (Debian bookworm) gives us glibc so MediaPipe wheels work.
-FROM python:3.11-slim AS builder
+# python:3.11-slim-bookworm (Debian bookworm) gives us glibc so MediaPipe wheels work.
+FROM python:3.11-slim-bookworm AS builder
 
 # System libraries needed by MediaPipe and OpenCV on a headless Debian image
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,7 +18,7 @@ COPY requirements.docker.txt .
 RUN pip install --no-cache-dir -r requirements.docker.txt
 
 # ── Runtime stage ─────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 LABEL org.opencontainers.image.title="PalmGate" \
       org.opencontainers.image.description="Palm biometric access system"
