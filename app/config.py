@@ -62,6 +62,11 @@ MODEL_METADATA = _load_model_metadata()
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
+APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
+if APP_ENV not in {"development", "production"}:
+    APP_ENV = "production"
+DEV_FEATURES_ENABLED = APP_ENV == "development"
+
 # DB_PATH can be overridden via environment variable for Docker deployments
 # e.g. DB_PATH=/data/palmprint.db → mount a named volume at /data
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "palmprint.db")))

@@ -119,6 +119,10 @@
             <button class="btn btn-mode" id="btnMode" aria-label="Toggle auto-detect mode">
               Auto
             </button>
+            <label class="btn btn-secondary dev-only scan-upload-btn" id="scanUploadLabel" hidden>
+              Upload photo
+              <input class="scan-upload-input" id="scanUploadFile" type="file" accept="image/*" />
+            </label>
           </div>
         </div>
 
@@ -161,6 +165,10 @@
                   <span class="meta-label">At</span>
                   <span class="meta-value" id="resultTimestamp">—</span>
                 </div>
+              </div>
+              <div class="roi-preview dev-only" id="roiPreview" hidden>
+                <div class="roi-preview-label">ROI used for embedding</div>
+                <img id="roiPreviewImage" alt="Processed palm ROI used for recognition" />
               </div>
             </div>
 
@@ -300,13 +308,14 @@
                 <span>Guided live captures</span>
               </button>
               <button
-                class="registration-mode-tab"
+                class="registration-mode-tab dev-only"
                 id="uploadRegistrationTab"
                 type="button"
                 role="tab"
                 aria-selected="false"
                 aria-controls="uploadRegistrationPanel"
                 data-registration-mode="upload"
+                hidden
               >
                 <strong>Upload images</strong>
                 <span>Selected hands · 5 photos each</span>
@@ -354,7 +363,7 @@
               </div>
             </div>
 
-            <div class="registration-mode-panel" id="uploadRegistrationPanel" data-registration-mode-panel="upload" role="tabpanel" aria-labelledby="uploadRegistrationTab" hidden>
+            <div class="registration-mode-panel dev-only" id="uploadRegistrationPanel" data-registration-mode-panel="upload" role="tabpanel" aria-labelledby="uploadRegistrationTab" hidden>
               <div class="registration-hand-select upload-hand-select" aria-label="Hands to upload">
                 <button class="registration-hand-chip active" id="uploadRegistrationLeftHand" type="button" data-hand-toggle="left" aria-pressed="true">Left <span id="uploadRegistrationLeftCount">0/5</span></button>
                 <button class="registration-hand-chip active" id="uploadRegistrationRightHand" type="button" data-hand-toggle="right" aria-pressed="true">Right <span id="uploadRegistrationRightCount">0/5</span></button>

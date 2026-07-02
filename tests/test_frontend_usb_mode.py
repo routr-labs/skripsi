@@ -228,13 +228,14 @@ def test_upload_busy_disables_registration_controls():
 
 def test_browser_camera_sends_full_frames_for_server_roi():
     source = Path("app/static/app.js").read_text()
+    submit_block = source[source.index("async function submitRecognitionImage") : source.index("async function triggerScan")]
     scan_block = source[source.index("async function triggerScan") : source.index("function showScanning")]
     capture_block = source[source.index("function captureBrowserSample") : source.index("async function finalizeBrowserRegistration")]
     finalize_block = source[source.index("async function finalizeBrowserRegistration") : source.index("function updateRegistrationUI")]
 
     assert "extractClientROI" not in source
     assert "b64 = captureFrame(video);" in scan_block
-    assert "body: JSON.stringify({ image: b64, is_roi: false })" in scan_block
+    assert "body: JSON.stringify({ image: b64, is_roi: false" in submit_block
     assert "b64 = captureFrame(videoReg);" in capture_block
     assert "is_roi: false" in finalize_block
 
@@ -244,3 +245,69 @@ def test_frontend_displays_nim_with_user_name():
 
     assert "${esc(u.nim)}" in source
     assert "${esc(u.name)}" in source
+
+
+def test_scan_panel_has_dev_upload_and_roi_preview_ui():
+    html = Path("app/static/index.html").read_text()
+    css = Path("app/static/style.css").read_text()
+
+    assert "id=\"scanUploadFile\"" in html
+    assert "id=\"scanUploadLabel\"" in html
+    assert "Upload photo" in html
+    assert "id=\"roiPreview\"" in html
+    assert "id=\"roiPreviewImage\"" in html
+    assert "ROI used for embedding" in html
+    assert ".dev-only[hidden]" in css
+    assert ".roi-preview" in css
+
+
+def test_upload_registration_tab_is_dev_only():
+    html = Path("app/static/index.html").read_text()
+    upload_tab = html[html.index('id="uploadRegistrationTab"') : html.index('id="uploadRegistrationPanel"')]
+
+    assert "dev-only" in upload_tab
+
+
+def test_frontend_tracks_dev_features_from_status():
+    source = Path("app/static/app.js").read_text()
+
+    assert "devFeatures: false" in source
+    assert "data.app?.dev_features === true" in source
+    assert "function updateDevFeatures()" in source
+    assert "document.querySelectorAll('.dev-only')" in source
+    assert "scanUploadLabel?.setAttribute('aria-disabled', String(!state.devFeatures))" in source
+    assert "state.registrationMode === 'upload'" in source
+
+    # Assert exact upload mode guard string
+    assert "if (mode === 'upload' && !state.devFeatures) return;" in source
+
+    # Assert updateUploadRegistrationUI disables upload registration with devFeatures guard
+    upload_ui_block = source[source.index("function updateUploadRegistrationUI") : source.index("function clearUploadRegistration")]
+    assert "|| !state.devFeatures" in upload_ui_block
+    assert "btnUploadRegister.disabled = (" in upload_ui_block
+
+
+def test_frontend_sends_debug_roi_and_renders_roi_preview():
+    source = Path("app/static/app.js").read_text()
+
+    assert "debug_roi: state.devFeatures" in source
+    assert "function updateRoiPreview(data)" in source
+    assert "roiPreviewImage.src = data.roi_image" in source
+    assert "function clearRoiPreview()" in source
+    assert "scanUploadFile?.addEventListener('change', handleScanUpload)" in source
+
+    upload_block = source[
+        source.index("async function handleScanUpload") : source.index("function clearRoiPreview")
+    ]
+    busy_guard = upload_block[
+        upload_block.index("if (state.scanBusy)") : upload_block.index("state.scanBusy = true")
+    ]
+    assert "scanUploadFile.value = '';" in busy_guard
+    assert busy_guard.index("scanUploadFile.value = '';") < busy_guard.index("return;")
+
+
+def test_upload_registration_sends_upload_source():
+    source = Path("app/static/app.js").read_text()
+    upload_block = source[source.index("async function finalizeUploadRegistration") : source.index("function resetRegistration")]
+
+    assert "source: 'upload'" in upload_block

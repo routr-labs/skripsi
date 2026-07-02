@@ -36,6 +36,7 @@ const state = {
   currentTab: 'scan',
   autoMode: true,
   usbDeviceMode: false,
+  devFeatures: false,
   usbScanEventSource: null,
   // Registration state
   registrationActive: false,
@@ -67,6 +68,10 @@ const overlayCanvasReg = $('overlayCanvasReg');
 const btnScan          = $('btnScan');
 const btnMode          = $('btnMode');
 const btnRefresh       = $('btnRefresh');
+const scanUploadFile   = $('scanUploadFile');
+const scanUploadLabel  = $('scanUploadLabel');
+const roiPreview       = $('roiPreview');
+const roiPreviewImage  = $('roiPreviewImage');
 const userName         = $('userName');
 const userNim          = $('userNim');
 const usbRegistrationPreview = $('usbRegistrationPreview');
@@ -465,6 +470,29 @@ btnScan.addEventListener('click', () => {
   if (!state.scanBusy) triggerScan();
 });
 
+async function submitRecognitionImage(b64) {
+  const scanStart = performance.now();
+  const res = await fetch('/api/recognize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: b64, is_roi: false, debug_roi: state.devFeatures }),
+  });
+  const elapsed = Math.round(performance.now() - scanStart);
+
+  if (res.status === 422) {
+    showNoHand('No hand detected — adjust position and try again');
+    return;
+  }
+  if (!res.ok) {
+    showNoHand('Server error — please try again');
+    return;
+  }
+
+  const data = await res.json();
+  showResult(data, elapsed);
+  updateStats(data.status);
+}
+
 async function triggerScan() {
   if (state.scanBusy) return;
   state.scanBusy = true;
@@ -474,27 +502,9 @@ async function triggerScan() {
   triggerFlash('captureFlash');
   showScanning();
 
-  const b64 = captureFrame(video);
-
-  const scanStart = performance.now();
-
   try {
-    const res = await fetch('/api/recognize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: b64, is_roi: false }),
-    });
-    const elapsed = Math.round(performance.now() - scanStart);
-
-    if (res.status === 422) {
-      showNoHand('No hand detected — adjust position and try again');
-    } else if (!res.ok) {
-      showNoHand('Server error — please try again');
-    } else {
-      const data = await res.json();
-      showResult(data, elapsed);
-      updateStats(data.status);
-    }
+    const b64 = captureFrame(video);
+    await submitRecognitionImage(b64);
   } catch (err) {
     showNoHand('Network error');
     console.error(err);
@@ -504,7 +514,51 @@ async function triggerScan() {
   state.scanBusy = false;
 }
 
+async function handleScanUpload() {
+  const file = scanUploadFile?.files?.[0];
+  if (!file) return;
+  if (!state.devFeatures) {
+    scanUploadFile.value = '';
+    return;
+  }
+  if (state.scanBusy) {
+    scanUploadFile.value = '';
+    return;
+  }
+
+  state.scanBusy = true;
+  triggerFlash('captureFlash');
+  showScanning();
+
+  try {
+    const b64 = await fileToDataUrl(file);
+    await submitRecognitionImage(b64);
+  } catch (err) {
+    showNoHand('Could not read uploaded image');
+    console.error(err);
+  } finally {
+    scanUploadFile.value = '';
+    state.scanCooldownUntil = Date.now() + SCAN_COOLDOWN_MS;
+    state.scanBusy = false;
+  }
+}
+
+function clearRoiPreview() {
+  if (roiPreview) roiPreview.hidden = true;
+  if (roiPreviewImage) roiPreviewImage.removeAttribute('src');
+}
+
+function updateRoiPreview(data) {
+  if (!state.devFeatures || !data?.roi_image || !roiPreview || !roiPreviewImage) {
+    clearRoiPreview();
+    return;
+  }
+  roiPreviewImage.src = data.roi_image;
+  roiPreview.hidden = false;
+}
+
 function showScanning() {
+  clearRoiPreview();
   $('resultDisplay').style.display  = 'none';
   $('resultIdle').style.display     = 'none';
   $('resultScanning').style.display = 'flex';
@@ -512,6 +566,7 @@ function showScanning() {
 }
 
 function showNoHand(msg) {
+  clearRoiPreview();
   $('resultScanning').style.display = 'none';
   $('resultDisplay').style.display  = 'none';
   $('resultIdle').style.display     = 'flex';
@@ -553,6 +608,7 @@ function showResult(data, elapsedMs) {
   } else {
     timingRow.style.display = 'none';
   }
+  updateRoiPreview(data);
 }
 
 function updateStats(status) {
@@ -965,6 +1021,7 @@ function renderQualityLine(guidance) {
 
 function setRegistrationMode(mode) {
   if (!['camera', 'upload'].includes(mode)) return;
+  if (mode === 'upload' && !state.devFeatures) return;
   if (state.registrationActive || state.uploadBusy) return;
   state.registrationMode = mode;
 
@@ -1030,6 +1087,7 @@ function updateUploadRegistrationUI() {
       state.registrationMode !== 'upload'
       || state.registrationActive
       || state.uploadBusy
+      || !state.devFeatures
       || !uploadSelectionComplete()
     );
   }
@@ -1081,6 +1139,7 @@ async function finalizeUploadRegistration() {
         name,
         images: uploadImages,
         hands: uploadHands,
+        source: 'upload',
         is_roi: false,
       }),
     });
@@ -1243,6 +1302,7 @@ registrationHandChips.forEach((chip) => {
 
 uploadLeftFiles?.addEventListener('change', updateUploadRegistrationUI);
 uploadRightFiles?.addEventListener('change', updateUploadRegistrationUI);
+scanUploadFile?.addEventListener('change', handleScanUpload);
 btnUploadRegister?.addEventListener('click', finalizeUploadRegistration);
 btnClearUploadFiles?.addEventListener('click', () => clearUploadRegistration());
 
@@ -1354,11 +1414,24 @@ async function loadStats() {
   } catch (_) { /* silent */ }
 }
 
+function updateDevFeatures() {
+  document.querySelectorAll('.dev-only').forEach((el) => {
+    el.hidden = !state.devFeatures;
+  });
+  scanUploadLabel?.setAttribute('aria-disabled', String(!state.devFeatures));
+  if (!state.devFeatures && state.registrationMode === 'upload') {
+    setRegistrationMode('camera');
+  }
+  if (!state.devFeatures) clearRoiPreview();
+}
+
 async function loadStatus() {
   try {
     const data = await fetch('/api/status').then((r) => r.json());
     const device = data.device || {};
     state.usbDeviceMode = data.app?.camera_source === 'usb' && data.app?.device_runtime_enabled === true;
+    state.devFeatures = data.app?.dev_features === true;
+    updateDevFeatures();
     const workerState = device.worker_state ?? 'disabled';
     const cameraConnected = !!device.camera_connected;
 

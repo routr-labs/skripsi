@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import (
+    DEV_FEATURES_ENABLED,
     DUPLICATE_THRESHOLD,
     ENROLLMENT_TTA_ENABLED,
     REGISTRATION_CAPTURES_PER_HAND,
@@ -24,6 +25,7 @@ class RegisterRequest(BaseModel):
     name: str
     images: list
     hands: list[str] = []
+    source: str = "camera"
     is_roi: bool = False          # True when the browser pre-cropped all palm ROIs
     rotation_angle: float = 0.0   # Kept for backward compatibility; new ROIs are already aligned
 
@@ -43,6 +45,12 @@ async def register(req: RegisterRequest):
         raise HTTPException(status_code=400, detail="NIM is required")
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
+
+    source = req.source.strip().lower()
+    if source not in {"camera", "upload"}:
+        raise HTTPException(status_code=400, detail="Invalid registration source")
+    if source == "upload" and not DEV_FEATURES_ENABLED:
+        raise HTTPException(status_code=403, detail="Upload registration is only available in development mode")
 
     required_detail = f"Need exactly {REGISTRATION_CAPTURES_PER_HAND} images for each selected hand"
     hands = [hand.lower() for hand in req.hands]

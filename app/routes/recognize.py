@@ -6,7 +6,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.config import RECOGNITION_TTA_ENABLED, SIMILARITY_THRESHOLD
+from app.config import DEV_FEATURES_ENABLED, RECOGNITION_TTA_ENABLED, SIMILARITY_THRESHOLD
 from app.services.recognition_service import match_embedding_and_log
 
 log = logging.getLogger("palmgate")
@@ -17,6 +17,7 @@ class RecognizeRequest(BaseModel):
     image: str
     is_roi: bool = False          # True when the browser has pre-cropped the palm ROI
     rotation_angle: float = 0.0   # Knuckle-line tilt (deg) from index-MCP→pinky-MCP vector
+    debug_roi: bool = False
 
 
 class RecognizeResponse(BaseModel):
@@ -24,6 +25,7 @@ class RecognizeResponse(BaseModel):
     name: str
     similarity: float
     closest_match: "str | None" = None
+    roi_image: "str | None" = None
 
 
 def decode_base64_image(b64_string: str) -> np.ndarray:
@@ -37,7 +39,20 @@ def decode_base64_image(b64_string: str) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
-@router.post("/api/recognize", response_model=RecognizeResponse)
+def encode_roi_image(processed_roi: np.ndarray) -> str | None:
+    try:
+        roi_uint8 = np.clip(processed_roi, 0, 255).astype(np.uint8)
+        ok, data = cv2.imencode(".jpg", cv2.cvtColor(roi_uint8, cv2.COLOR_RGB2BGR))
+        if not ok:
+            log.warning("RECOGNIZE | ROI preview encoding failed: cv2.imencode returned false")
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(data.tobytes()).decode("ascii")
+    except Exception as exc:
+        log.warning("RECOGNIZE | ROI preview encoding failed: %s", exc)
+        return None
+
+
+@router.post("/api/recognize", response_model=RecognizeResponse, response_model_exclude_unset=True)
 async def recognize(req: RecognizeRequest):
     from app.main import palm_processor, db
 
@@ -50,18 +65,34 @@ async def recognize(req: RecognizeRequest):
         log.error("RECOGNIZE | image decode failed: %s", e)
         raise HTTPException(status_code=400, detail="Invalid image data")
 
+    processed_roi = None
+    should_return_roi = DEV_FEATURES_ENABLED and req.debug_roi
+
     if req.is_roi:
         log.debug("RECOGNIZE | using pre-cropped client ROI — skipping server detection")
-        embedding = palm_processor.get_embedding_from_roi(
-            frame,
-            req.rotation_angle,
-            tta_enabled=RECOGNITION_TTA_ENABLED,
-        )
+        if should_return_roi:
+            embedding, processed_roi = palm_processor.get_embedding_from_roi_with_processed_roi(
+                frame,
+                req.rotation_angle,
+                tta_enabled=RECOGNITION_TTA_ENABLED,
+            )
+        else:
+            embedding = palm_processor.get_embedding_from_roi(
+                frame,
+                req.rotation_angle,
+                tta_enabled=RECOGNITION_TTA_ENABLED,
+            )
     else:
-        embedding = palm_processor.get_embedding_from_notebook_frame(
-            frame,
-            tta_enabled=RECOGNITION_TTA_ENABLED,
-        )
+        if should_return_roi:
+            embedding, processed_roi = palm_processor.get_embedding_with_processed_roi(
+                frame,
+                tta_enabled=RECOGNITION_TTA_ENABLED,
+            )
+        else:
+            embedding = palm_processor.get_embedding_from_notebook_frame(
+                frame,
+                tta_enabled=RECOGNITION_TTA_ENABLED,
+            )
 
     if embedding is None:
         log.warning("RECOGNIZE | returning 422 — no hand detected in frame")
@@ -69,4 +100,9 @@ async def recognize(req: RecognizeRequest):
 
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     result = match_embedding_and_log(palm_processor, db, embedding, SIMILARITY_THRESHOLD, duration_ms=duration_ms)
-    return RecognizeResponse(**result)
+    payload = dict(result)
+    if should_return_roi and processed_roi is not None:
+        roi_image = encode_roi_image(processed_roi)
+        if roi_image:
+            payload["roi_image"] = roi_image
+    return RecognizeResponse(**payload)

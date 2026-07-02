@@ -213,3 +213,45 @@ def test_register_rejects_missing_selected_hand_samples():
 
     assert response.status_code == 400
     assert "5 images for each selected hand" in response.json()["detail"]
+
+
+def test_register_rejects_upload_source_in_production(monkeypatch):
+    import app.routes.register as register_route
+
+    monkeypatch.setattr(register_route, "DEV_FEATURES_ENABLED", False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/register",
+        json={
+            "nim": "12345",
+            "name": "Alice",
+            "images": ["img"] * 5,
+            "hands": ["left"] * 5,
+            "source": "upload",
+        },
+    )
+
+    assert response.status_code == 403
+    assert "development mode" in response.json()["detail"]
+
+
+def test_register_rejects_unknown_source(monkeypatch):
+    import app.routes.register as register_route
+
+    monkeypatch.setattr(register_route, "DEV_FEATURES_ENABLED", True)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/register",
+        json={
+            "nim": "12345",
+            "name": "Alice",
+            "images": ["img"] * 5,
+            "hands": ["left"] * 5,
+            "source": "kiosk",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Invalid registration source" in response.json()["detail"]

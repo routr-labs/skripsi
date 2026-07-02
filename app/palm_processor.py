@@ -200,12 +200,17 @@ class PalmProcessor:
         resized = cv2.resize(rgb, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
         return resized.astype(np.float32)
 
-    def get_embedding(self, frame_rgb: np.ndarray, tta_enabled: bool = False):
+    def get_embedding_with_processed_roi(self, frame_rgb: np.ndarray, tta_enabled: bool = False):
         roi = self.extract_palm_roi(frame_rgb)
         if roi is None:
-            return None
+            return None, None
         processed = self.preprocess_roi(roi)
-        return self._run_inference_with_optional_tta(processed, tta_enabled=tta_enabled)
+        embedding = self._run_inference_with_optional_tta(processed, tta_enabled=tta_enabled)
+        return embedding, processed
+
+    def get_embedding(self, frame_rgb: np.ndarray, tta_enabled: bool = False):
+        embedding, _ = self.get_embedding_with_processed_roi(frame_rgb, tta_enabled=tta_enabled)
+        return embedding
 
     def get_embedding_from_notebook_frame(self, frame_rgb: np.ndarray, tta_enabled: bool = False):
         # Compatibility wrapper: the new embedding model was trained on MediaPipe ROI,
@@ -277,7 +282,7 @@ class PalmProcessor:
             )
         return metrics
 
-    def get_embedding_from_roi(
+    def get_embedding_from_roi_with_processed_roi(
         self,
         roi_rgb: np.ndarray,
         rotation_angle: float = 0.0,
@@ -286,11 +291,25 @@ class PalmProcessor:
         """Process a pre-extracted, already-aligned palm ROI from the browser."""
         if roi_rgb is None or roi_rgb.size == 0:
             log.warning("DETECT | received empty ROI from client")
-            return None
+            return None, None
 
         log.info("DETECT | using client-side ROI  shape=%s", roi_rgb.shape)
         processed = self.preprocess_roi(roi_rgb)
-        return self._run_inference_with_optional_tta(processed, tta_enabled=tta_enabled)
+        embedding = self._run_inference_with_optional_tta(processed, tta_enabled=tta_enabled)
+        return embedding, processed
+
+    def get_embedding_from_roi(
+        self,
+        roi_rgb: np.ndarray,
+        rotation_angle: float = 0.0,
+        tta_enabled: bool = False,
+    ):
+        embedding, _ = self.get_embedding_from_roi_with_processed_roi(
+            roi_rgb,
+            rotation_angle,
+            tta_enabled=tta_enabled,
+        )
+        return embedding
 
     def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         vector = np.asarray(embedding, dtype=np.float32).reshape(-1)

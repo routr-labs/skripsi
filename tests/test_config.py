@@ -157,3 +157,33 @@ def test_model_metadata_overrides_threshold_and_dim(tmp_path, monkeypatch):
     assert config.EMBEDDING_DIM == 64
     assert config.SIMILARITY_THRESHOLD == 0.8123
     assert config.TTA_ROTATIONS == (0.0, -3.0, 3.0)
+
+
+def test_app_env_defaults_to_production(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "production"
+    assert config.DEV_FEATURES_ENABLED is False
+
+
+def test_app_env_development_enables_dev_features(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "development"
+    assert config.DEV_FEATURES_ENABLED is True
+
+
+def test_invalid_app_env_falls_back_to_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "local")
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "production"
+    assert config.DEV_FEATURES_ENABLED is False

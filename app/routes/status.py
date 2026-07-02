@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.config import CAMERA_SOURCE, DB_PATH, DEVICE_RUNTIME_ENABLED
+from app.config import APP_ENV, CAMERA_SOURCE, DB_PATH, DEVICE_RUNTIME_ENABLED, DEV_FEATURES_ENABLED
 
 router = APIRouter()
 
@@ -42,6 +42,8 @@ async def status():
         "app": {
             "mode": "hybrid",
             "version": "local",
+            "environment": APP_ENV,
+            "dev_features": DEV_FEATURES_ENABLED,
             "camera_source": CAMERA_SOURCE,
             "device_runtime_enabled": DEVICE_RUNTIME_ENABLED,
         },
