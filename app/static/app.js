@@ -1432,6 +1432,7 @@ async function loadStatus() {
     const device = data.device || {};
     state.usbDeviceMode = data.app?.camera_source === 'usb' && data.app?.device_runtime_enabled === true;
     state.devFeatures = data.app?.dev_features === true;
+    $('appVersion').textContent = data.app?.version ?? 'local';
     updateDevFeatures();
     const workerState = device.worker_state ?? 'disabled';
     const cameraConnected = !!device.camera_connected;

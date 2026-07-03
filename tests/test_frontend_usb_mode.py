@@ -318,3 +318,11 @@ def test_upload_registration_sends_upload_source():
     upload_block = source[source.index("async function finalizeUploadRegistration") : source.index("function resetRegistration")]
 
     assert "source: 'upload'" in upload_block
+
+
+def test_device_status_card_shows_app_version():
+    html = Path("app/static/index.html").read_text()
+    source = Path("app/static/app.js").read_text()
+
+    assert 'id="appVersion"' in html
+    assert "$('appVersion').textContent = data.app?.version ?? 'local';" in source
