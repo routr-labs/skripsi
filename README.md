@@ -37,12 +37,23 @@ Open: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
 ## Run with Docker
 
-Docker Compose reads `.env`, not `.env.example`. The example defaults to the USB profile:
+Docker Compose reads `.env`, not `.env.example`. The example defaults to the USB profile and pulls the prebuilt GHCR image:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose pull
+docker compose up -d
 ```
+
+To update the Orange Pi after pushing new code:
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+The running build SHA is shown in the dashboard status card and in `/api/status` as `app.version`.
 
 ## Current features
 

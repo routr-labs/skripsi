@@ -48,11 +48,13 @@ def test_env_example_selects_usb_compose_profile_by_default():
     assert "LOCK_UNLOCK_MS=2000" in env_example
 
 
-def test_readme_documents_default_usb_compose_start():
+def test_readme_documents_prebuilt_image_update_flow():
     readme = Path("README.md").read_text()
 
     assert "cp .env.example .env" in readme
-    assert "docker compose up --build" in readme
+    assert "docker compose pull" in readme
+    assert "docker compose up -d" in readme
+    assert "docker compose up --build" not in readme
 
 
 def test_usb_compose_uses_configurable_camera_device_path():
