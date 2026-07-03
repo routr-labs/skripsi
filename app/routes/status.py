@@ -1,6 +1,13 @@
 from fastapi import APIRouter
 
-from app.config import APP_ENV, CAMERA_SOURCE, DB_PATH, DEVICE_RUNTIME_ENABLED, DEV_FEATURES_ENABLED
+from app.config import (
+    APP_ENV,
+    CAMERA_SOURCE,
+    DB_PATH,
+    DEVICE_RUNTIME_ENABLED,
+    DEV_FEATURES_ENABLED,
+    PALMGATE_VERSION,
+)
 
 router = APIRouter()
 
@@ -41,7 +48,7 @@ async def status():
     return {
         "app": {
             "mode": "hybrid",
-            "version": "local",
+            "version": PALMGATE_VERSION,
             "environment": APP_ENV,
             "dev_features": DEV_FEATURES_ENABLED,
             "camera_source": CAMERA_SOURCE,

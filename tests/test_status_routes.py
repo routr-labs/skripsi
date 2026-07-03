@@ -71,3 +71,15 @@ def test_status_includes_environment_and_dev_features(monkeypatch):
     app_status = response.json()["app"]
     assert app_status["environment"] == "development"
     assert app_status["dev_features"] is True
+
+
+def test_status_reports_configured_app_version(monkeypatch):
+    import app.routes.status as status_route
+
+    monkeypatch.setattr(status_route, "PALMGATE_VERSION", "8f5f5d1")
+
+    client = TestClient(app)
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json()["app"]["version"] == "8f5f5d1"

@@ -66,6 +66,7 @@ APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 if APP_ENV not in {"development", "production"}:
     APP_ENV = "production"
 DEV_FEATURES_ENABLED = APP_ENV == "development"
+PALMGATE_VERSION = os.getenv("PALMGATE_VERSION", "local").strip() or "local"
 
 # DB_PATH can be overridden via environment variable for Docker deployments
 # e.g. DB_PATH=/data/palmprint.db → mount a named volume at /data
