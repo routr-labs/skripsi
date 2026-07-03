@@ -112,3 +112,13 @@ def test_env_example_documents_palmgate_image():
     env_example = Path(".env.example").read_text()
 
     assert "PALMGATE_IMAGE=ghcr.io/nhaidaar/palm-recognition-preview:latest" in env_example
+
+
+def test_github_actions_publishes_ghcr_image_with_version_arg():
+    workflow = Path(".github/workflows/docker.yml").read_text()
+
+    assert "ghcr.io/nhaidaar/palm-recognition-preview" in workflow
+    assert "SHORT_SHA=${GITHUB_SHA::7}" in workflow
+    assert "PALMGATE_VERSION=${{ env.SHORT_SHA }}" in workflow
+    assert "docker/build-push-action@v6" in workflow
+    assert "packages: write" in workflow
