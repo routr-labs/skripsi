@@ -50,6 +50,8 @@ EXPOSE 8000
 
 # DB_PATH is overridden by docker-compose so the DB lands on the volume,
 # not inside the container's writable layer.
+ARG PALMGATE_VERSION=local
+ENV PALMGATE_VERSION=${PALMGATE_VERSION}
 ENV DB_PATH=/data/palmprint.db
 ENV ORT_LOG_SEVERITY_LEVEL=3
 

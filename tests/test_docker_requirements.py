@@ -91,3 +91,24 @@ def test_compose_mounts_selected_model_version_from_project_models():
     assert "./models/embedding:/app/models/embedding:ro" not in compose
     assert "./palm_embedding.tflite:/app/palm_embedding.tflite" not in compose
     assert "palm_recognition.tflite:/app/palm_recognition.tflite" not in compose
+
+
+def test_dockerfile_stamps_palmgate_version():
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "ARG PALMGATE_VERSION=local" in dockerfile
+    assert "ENV PALMGATE_VERSION=${PALMGATE_VERSION}" in dockerfile
+
+
+def test_compose_uses_prebuilt_ghcr_image_by_default():
+    compose = Path("docker-compose.yml").read_text()
+    common = compose[compose.index("x-palmgate-common:") : compose.index("x-cloudflared-common:")]
+
+    assert "image: ${PALMGATE_IMAGE:-ghcr.io/nhaidaar/palm-recognition-preview:latest}" in common
+    assert "build:" not in common
+
+
+def test_env_example_documents_palmgate_image():
+    env_example = Path(".env.example").read_text()
+
+    assert "PALMGATE_IMAGE=ghcr.io/nhaidaar/palm-recognition-preview:latest" in env_example

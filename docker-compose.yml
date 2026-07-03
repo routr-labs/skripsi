@@ -1,5 +1,5 @@
 x-palmgate-common: &palmgate-common
-  build: .
+  image: ${PALMGATE_IMAGE:-ghcr.io/nhaidaar/palm-recognition-preview:latest}
   container_name: palmgate
   restart: unless-stopped
 
