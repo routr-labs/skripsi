@@ -122,5 +122,7 @@ def test_github_actions_publishes_ghcr_image_with_version_arg():
     assert "ghcr.io/nhaidaar/palm-recognition-preview" in workflow
     assert "SHORT_SHA=${GITHUB_SHA::7}" in workflow
     assert "PALMGATE_VERSION=${{ env.SHORT_SHA }}" in workflow
+    assert "docker/setup-qemu-action@v3" in workflow
     assert "docker/build-push-action@v6" in workflow
+    assert "platforms: linux/amd64,linux/arm64" in workflow
     assert "packages: write" in workflow
