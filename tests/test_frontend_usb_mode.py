@@ -20,6 +20,7 @@ def test_frontend_tracks_usb_device_mode_from_status():
 def test_frontend_streams_usb_preview_without_browser_camera():
     source = Path("app/static/app.js").read_text()
     init_block = source[source.index("Init") :]
+    usb_init_block = init_block[init_block.index("startUsbPreview()") : init_block.index("// Show USB preview")]
 
     assert "startUsbPreview()" in init_block
     assert "document.createElement('img')" in source
@@ -27,7 +28,7 @@ def test_frontend_streams_usb_preview_without_browser_camera():
     assert "/api/device-registration/preview.jpg?t=" not in source
     assert "URL.createObjectURL" not in source
     assert "setInterval(updatePreview" not in source
-    assert init_block.index("startUsbPreview()") < init_block.index("setAutoMode(false)")
+    assert "setAutoMode(false)" not in usb_init_block
 
 
 def test_usb_registration_panel_has_camera_preview():
@@ -229,28 +230,15 @@ def test_upload_busy_disables_registration_controls():
 def test_browser_camera_sends_full_frames_for_server_roi():
     source = Path("app/static/app.js").read_text()
     submit_block = source[source.index("async function submitRecognitionImage") : source.index("async function triggerScan")]
-    scan_block = source[source.index("async function triggerScan") : source.index("async function handleScanUpload")]
+    scan_block = source[source.index("async function triggerScan") : source.index("function showScanning")]
     capture_block = source[source.index("function captureBrowserSample") : source.index("async function finalizeBrowserRegistration")]
     finalize_block = source[source.index("async function finalizeBrowserRegistration") : source.index("function updateRegistrationUI")]
 
     assert "extractClientROI" not in source
-    assert "const images = await captureFrameBurst(video);" in scan_block
-    assert "body: JSON.stringify(payload)" in submit_block
+    assert "b64 = captureFrame(video);" in scan_block
+    assert "body: JSON.stringify({ image: b64, is_roi: false" in submit_block
     assert "b64 = captureFrame(videoReg);" in capture_block
     assert "is_roi: false" in finalize_block
-
-
-def test_browser_scan_sends_three_frame_burst_for_recognition():
-    source = Path("app/static/app.js").read_text()
-    submit_block = source[source.index("async function submitRecognitionImage") : source.index("async function triggerScan")]
-    scan_block = source[source.index("async function triggerScan") : source.index("async function handleScanUpload")]
-
-    assert "const SCAN_BURST_FRAMES = 3" in source
-    assert "async function captureFrameBurst(videoEl)" in source
-    assert "const images = await captureFrameBurst(video);" in scan_block
-    assert "await submitRecognitionImage(images);" in scan_block
-    assert "const payload = Array.isArray(imageOrImages)" in submit_block
-    assert "images: imageOrImages" in submit_block
 
 
 def test_frontend_displays_nim_with_user_name():

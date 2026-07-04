@@ -28,11 +28,10 @@ from app.lock_controller import NoopLockController, build_lock_controller
 from app.services.embedding_templates import build_hand_templates, overall_template
 from app.services.recognition_service import match_embedding_and_log
 from app.services.registration_quality import SAMPLE_TARGETS, evaluate_guidance
-from app.services.scan_quality import scan_frame_score, scan_quality_failures
+from app.services.scan_quality import scan_quality_failures
 
 
 log = logging.getLogger("palmgate.device_runtime")
-SCAN_BURST_FRAMES = 3
 
 @dataclass
 class DeviceRegistrationSession:
@@ -112,7 +111,6 @@ class DeviceRuntime:
         self._registration_lock = threading.Lock()
         self.scan_state = {"stage": "starting", "metrics": None}
         self.latest_frame = None
-        self._camera_lock = threading.Lock()
         self._frame_lock = threading.Lock()
         self._thread = None
         self._preview_thread = None
@@ -120,8 +118,7 @@ class DeviceRuntime:
         self.scan_broadcaster = ScanEventBroadcaster()
 
     def capture_preview_frame(self):
-        with self._camera_lock:
-            frame = self.camera.read()
+        frame = self.camera.read()
         with self._frame_lock:
             self.latest_frame = frame.copy()
         return frame
@@ -135,28 +132,6 @@ class DeviceRuntime:
         if frame is None:
             frame = self.capture_preview_frame()
         return frame
-
-    def _capture_scan_burst(self, count: int = SCAN_BURST_FRAMES) -> list[np.ndarray]:
-        return [self.capture_preview_frame() for _ in range(count)]
-
-    def _select_best_scan_frame(self, frames: list[np.ndarray]):
-        best = None
-        best_metrics = None
-        best_score = -1.0
-        first_failures = []
-        for frame in frames:
-            metrics = self.palm_processor.get_registration_guidance_metrics(frame)
-            failures = scan_quality_failures(metrics)
-            if failures:
-                if not first_failures:
-                    first_failures = failures
-                continue
-            score = scan_frame_score(metrics)
-            if score > best_score:
-                best = frame
-                best_metrics = metrics
-                best_score = score
-        return best, best_metrics, first_failures
 
     def _selected_registration_hands(self, hands=None) -> tuple[str, ...]:
         if hands is None:
@@ -430,16 +405,6 @@ class DeviceRuntime:
             return None
 
         self.scan_state = {"stage": "recognizing", "metrics": metrics}
-        frame, metrics, quality_failures = self._select_best_scan_frame([frame] + self._capture_scan_burst())
-        if frame is None:
-            self.hand_seen_since_ms = None
-            self.scan_state = {
-                "stage": "scan_quality_failed",
-                "metrics": metrics,
-                "failures": quality_failures,
-            }
-            return None
-
         embedding = self.palm_processor.get_embedding_from_notebook_frame(
             frame,
             tta_enabled=RECOGNITION_TTA_ENABLED,

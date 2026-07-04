@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from app.config import DEV_FEATURES_ENABLED, RECOGNITION_TTA_ENABLED, SIMILARITY_THRESHOLD
 from app.services.recognition_service import match_embedding_and_log
-from app.services.scan_quality import scan_frame_score, scan_quality_failures
 
 log = logging.getLogger("palmgate")
 router = APIRouter()
@@ -16,7 +15,6 @@ router = APIRouter()
 
 class RecognizeRequest(BaseModel):
     image: str
-    images: list[str] | None = None
     is_roi: bool = False          # True when the browser has pre-cropped the palm ROI
     rotation_angle: float = 0.0   # Knuckle-line tilt (deg) from index-MCP→pinky-MCP vector
     debug_roi: bool = False
@@ -54,20 +52,6 @@ def encode_roi_image(processed_roi: np.ndarray) -> str | None:
         return None
 
 
-def select_best_scan_frame(palm_processor, frames: list[np.ndarray]):
-    best = None
-    best_score = -1.0
-    for frame in frames:
-        metrics = palm_processor.get_registration_guidance_metrics(frame)
-        if scan_quality_failures(metrics):
-            continue
-        score = scan_frame_score(metrics)
-        if score > best_score:
-            best = frame
-            best_score = score
-    return best
-
-
 @router.post("/api/recognize", response_model=RecognizeResponse, response_model_exclude_unset=True)
 async def recognize(req: RecognizeRequest):
     from app.main import palm_processor, db
@@ -75,17 +59,8 @@ async def recognize(req: RecognizeRequest):
     started_at = time.perf_counter()
     try:
         frame = decode_base64_image(req.image)
-        if req.images and not req.is_roi:
-            burst_frames = [decode_base64_image(image) for image in req.images]
-            best_frame = select_best_scan_frame(palm_processor, burst_frames)
-            if best_frame is None:
-                log.warning("RECOGNIZE | returning 422 — no acceptable burst frame")
-                raise HTTPException(status_code=422, detail="No acceptable hand frame")
-            frame = best_frame
         log.debug("RECOGNIZE | decoded image  shape=%s  dtype=%s  payload_len=%d",
                   frame.shape, frame.dtype, len(req.image))
-    except HTTPException:
-        raise
     except Exception as e:
         log.error("RECOGNIZE | image decode failed: %s", e)
         raise HTTPException(status_code=400, detail="Invalid image data")
