@@ -430,7 +430,7 @@ class DeviceRuntime:
             return None
 
         self.scan_state = {"stage": "recognizing", "metrics": metrics}
-        frame, metrics, quality_failures = self._select_best_scan_frame(self._capture_scan_burst())
+        frame, metrics, quality_failures = self._select_best_scan_frame([frame] + self._capture_scan_burst())
         if frame is None:
             self.hand_seen_since_ms = None
             self.scan_state = {
