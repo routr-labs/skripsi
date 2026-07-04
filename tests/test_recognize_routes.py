@@ -172,3 +172,55 @@ def test_recognize_does_not_return_roi_image_in_production(monkeypatch):
     data = response.json()
     assert data["closest_match"] is None
     assert "roi_image" not in data
+
+
+def test_recognize_burst_uses_sharpest_acceptable_frame(monkeypatch):
+    import app.main as main
+    import app.routes.recognize as recognize_route
+
+    frames = {
+        "fallback": np.full((2, 2, 3), 100, dtype=np.uint8),
+        "soft": np.full((2, 2, 3), 110, dtype=np.uint8),
+        "sharp": np.full((2, 2, 3), 130, dtype=np.uint8),
+        "middle": np.full((2, 2, 3), 120, dtype=np.uint8),
+    }
+
+    class FakeProcessor:
+        def __init__(self):
+            self.embedded_mean = None
+
+        def get_registration_guidance_metrics(self, frame, previous_metrics=None):
+            return {
+                "hand_detected": True,
+                "hand_clipped": False,
+                "brightness": 120.0,
+                "blur_score": float(frame.mean()),
+            }
+
+        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
+            self.embedded_mean = int(frame.mean())
+            return np.ones(4, dtype=np.float32)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "ALLOWED", "name": "Naufal", "similarity": 0.9, "closest_match": "Naufal", "user_id": 1}
+
+    class FakeDB:
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, *args, **kwargs):
+            pass
+
+    processor = FakeProcessor()
+    monkeypatch.setattr(main, "palm_processor", processor)
+    monkeypatch.setattr(main, "db", FakeDB())
+    monkeypatch.setattr(recognize_route, "decode_base64_image", lambda image: frames[image])
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/recognize",
+        json={"image": "fallback", "images": ["soft", "sharp", "middle"]},
+    )
+
+    assert response.status_code == 200
+    assert processor.embedded_mean == 130

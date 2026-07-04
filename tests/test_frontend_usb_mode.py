@@ -229,15 +229,28 @@ def test_upload_busy_disables_registration_controls():
 def test_browser_camera_sends_full_frames_for_server_roi():
     source = Path("app/static/app.js").read_text()
     submit_block = source[source.index("async function submitRecognitionImage") : source.index("async function triggerScan")]
-    scan_block = source[source.index("async function triggerScan") : source.index("function showScanning")]
+    scan_block = source[source.index("async function triggerScan") : source.index("async function handleScanUpload")]
     capture_block = source[source.index("function captureBrowserSample") : source.index("async function finalizeBrowserRegistration")]
     finalize_block = source[source.index("async function finalizeBrowserRegistration") : source.index("function updateRegistrationUI")]
 
     assert "extractClientROI" not in source
-    assert "b64 = captureFrame(video);" in scan_block
-    assert "body: JSON.stringify({ image: b64, is_roi: false" in submit_block
+    assert "const images = await captureFrameBurst(video);" in scan_block
+    assert "body: JSON.stringify(payload)" in submit_block
     assert "b64 = captureFrame(videoReg);" in capture_block
     assert "is_roi: false" in finalize_block
+
+
+def test_browser_scan_sends_three_frame_burst_for_recognition():
+    source = Path("app/static/app.js").read_text()
+    submit_block = source[source.index("async function submitRecognitionImage") : source.index("async function triggerScan")]
+    scan_block = source[source.index("async function triggerScan") : source.index("async function handleScanUpload")]
+
+    assert "const SCAN_BURST_FRAMES = 3" in source
+    assert "async function captureFrameBurst(videoEl)" in source
+    assert "const images = await captureFrameBurst(video);" in scan_block
+    assert "await submitRecognitionImage(images);" in scan_block
+    assert "const payload = Array.isArray(imageOrImages)" in submit_block
+    assert "images: imageOrImages" in submit_block
 
 
 def test_frontend_displays_nim_with_user_name():

@@ -11,6 +11,7 @@ const SCAN_HOLD_MS     = 800;    // hold steady before auto-scan triggers
 const REG_HOLD_MS      = 1000;   // hold steady before auto-capture
 const REG_COOLDOWN_MS  = 1500;   // gap between auto-captures
 const SCAN_COOLDOWN_MS = 3000;   // cooldown after scan result
+const SCAN_BURST_FRAMES = 3;
 const USB_PREVIEW_STREAM_URL = '/api/device-registration/preview.mjpg';
 
 const REGISTRATION_HANDS = ['left', 'right'];
@@ -418,6 +419,19 @@ function captureFrame(videoEl) {
   return canvas.toDataURL('image/jpeg', 0.9);
 }
 
+function nextVideoFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+async function captureFrameBurst(videoEl) {
+  const images = [];
+  for (let i = 0; i < SCAN_BURST_FRAMES; i++) {
+    await nextVideoFrame();
+    images.push(captureFrame(videoEl));
+  }
+  return images;
+}
+
 function triggerFlash(flashId) {
   const el = $(flashId);
   el.classList.remove('flash');
@@ -470,12 +484,15 @@ btnScan.addEventListener('click', () => {
   if (!state.scanBusy) triggerScan();
 });
 
-async function submitRecognitionImage(b64) {
+async function submitRecognitionImage(imageOrImages) {
   const scanStart = performance.now();
+  const payload = Array.isArray(imageOrImages)
+    ? { image: imageOrImages[0], images: imageOrImages, is_roi: false, debug_roi: state.devFeatures }
+    : { image: imageOrImages, is_roi: false, debug_roi: state.devFeatures };
   const res = await fetch('/api/recognize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: b64, is_roi: false, debug_roi: state.devFeatures }),
+    body: JSON.stringify(payload),
   });
   const elapsed = Math.round(performance.now() - scanStart);
 
@@ -503,8 +520,8 @@ async function triggerScan() {
   showScanning();
 
   try {
-    const b64 = captureFrame(video);
-    await submitRecognitionImage(b64);
+    const images = await captureFrameBurst(video);
+    await submitRecognitionImage(images);
   } catch (err) {
     showNoHand('Network error');
     console.error(err);
