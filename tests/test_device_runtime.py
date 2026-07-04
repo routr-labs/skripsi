@@ -273,6 +273,43 @@ def test_runtime_preview_capture_is_independent_from_scan_processing():
     assert runtime.preview_frame_interval_ms == 100
 
 
+def test_runtime_serializes_camera_reads():
+    import threading
+    import time
+    from app.device_runtime import DeviceRuntime
+
+    class FakeCamera:
+        def __init__(self):
+            self.active_reads = 0
+            self.saw_concurrent_read = False
+            self.lock = threading.Lock()
+
+        def read(self):
+            with self.lock:
+                self.active_reads += 1
+                self.saw_concurrent_read = self.saw_concurrent_read or self.active_reads > 1
+            time.sleep(0.02)
+            with self.lock:
+                self.active_reads -= 1
+            return np.zeros((2, 2, 3), dtype=np.uint8)
+
+    camera = FakeCamera()
+    runtime = DeviceRuntime(camera=camera, palm_processor=None, db=None)
+    start = threading.Event()
+
+    def read_frame():
+        start.wait()
+        runtime.capture_preview_frame()
+
+    threads = [threading.Thread(target=read_frame) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.set()
+    for thread in threads:
+        thread.join()
+
+    assert camera.saw_concurrent_read is False
+
 def test_runtime_tracks_scan_state_when_no_hand_detected():
     from app.device_runtime import DeviceRuntime
 

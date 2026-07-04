@@ -410,8 +410,8 @@ function startUsbScanEvents() {
 }
 
 function captureFrame(videoEl) {
-  const w = videoEl.videoWidth  || 640;
-  const h = videoEl.videoHeight || 480;
+  const w = videoEl.videoWidth  || videoEl.naturalWidth  || 640;
+  const h = videoEl.videoHeight || videoEl.naturalHeight || 480;
   canvas.width  = w;
   canvas.height = h;
   canvas.getContext('2d').drawImage(videoEl, 0, 0, w, h);
@@ -503,7 +503,8 @@ async function triggerScan() {
   showScanning();
 
   try {
-    const b64 = captureFrame(video);
+    const scanSource = state.usbDeviceMode ? $('usbPreview') : video;
+    const b64 = captureFrame(scanSource);
     await submitRecognitionImage(b64);
   } catch (err) {
     showNoHand('Network error');

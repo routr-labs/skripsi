@@ -111,6 +111,7 @@ class DeviceRuntime:
         self._registration_lock = threading.Lock()
         self.scan_state = {"stage": "starting", "metrics": None}
         self.latest_frame = None
+        self._camera_lock = threading.Lock()
         self._frame_lock = threading.Lock()
         self._thread = None
         self._preview_thread = None
@@ -118,7 +119,8 @@ class DeviceRuntime:
         self.scan_broadcaster = ScanEventBroadcaster()
 
     def capture_preview_frame(self):
-        frame = self.camera.read()
+        with self._camera_lock:
+            frame = self.camera.read()
         with self._frame_lock:
             self.latest_frame = frame.copy()
         return frame

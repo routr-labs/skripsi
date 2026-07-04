@@ -31,6 +31,16 @@ def test_frontend_streams_usb_preview_without_browser_camera():
     assert "setAutoMode(false)" not in usb_init_block
 
 
+def test_usb_scan_button_captures_visible_usb_preview_not_hidden_video():
+    source = Path("app/static/app.js").read_text()
+    capture_block = source[source.index("function captureFrame") : source.index("function triggerFlash")]
+    scan_block = source[source.index("async function triggerScan") : source.index("async function handleScanUpload")]
+
+    assert "naturalWidth" in capture_block
+    assert "const scanSource = state.usbDeviceMode ? $('usbPreview') : video;" in scan_block
+    assert "const b64 = captureFrame(scanSource);" in scan_block
+
+
 def test_usb_registration_panel_has_camera_preview():
     html = Path("app/static/index.html").read_text()
     source = Path("app/static/app.js").read_text()
@@ -235,7 +245,8 @@ def test_browser_camera_sends_full_frames_for_server_roi():
     finalize_block = source[source.index("async function finalizeBrowserRegistration") : source.index("function updateRegistrationUI")]
 
     assert "extractClientROI" not in source
-    assert "b64 = captureFrame(video);" in scan_block
+    assert "const scanSource = state.usbDeviceMode ? $('usbPreview') : video;" in scan_block
+    assert "const b64 = captureFrame(scanSource);" in scan_block
     assert "body: JSON.stringify({ image: b64, is_roi: false" in submit_block
     assert "b64 = captureFrame(videoReg);" in capture_block
     assert "is_roi: false" in finalize_block
