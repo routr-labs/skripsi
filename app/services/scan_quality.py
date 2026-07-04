@@ -1,11 +1,5 @@
 def scan_quality_failures(metrics: dict) -> list[str]:
-    # ponytail: recognition blocks only detection/clipping; blur stays a ranking signal.
-    failures = []
-    if not metrics.get("hand_detected", False):
-        failures.append("hand")
-    if metrics.get("hand_clipped", False):
-        failures.append("clipping")
-    return failures
+    return [] if metrics.get("hand_detected", False) else ["hand"]
 
 
 def scan_frame_score(metrics: dict) -> float:

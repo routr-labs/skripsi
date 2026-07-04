@@ -532,7 +532,7 @@ def test_runtime_scans_again_after_cooldown_with_hand_still_present():
     assert len(runtime.db.logged) == 2
 
 
-def test_runtime_blocks_clipped_hand_before_recognition():
+def test_runtime_recognizes_clipped_detected_hand_like_legacy_flow():
     from app.device_runtime import DeviceRuntime
 
     class FakeClock:
@@ -547,6 +547,9 @@ def test_runtime_blocks_clipped_hand_before_recognition():
             return np.zeros((240, 320, 3), dtype=np.uint8)
 
     class FakeProcessor:
+        def __init__(self):
+            self.embedding_calls = 0
+
         def get_registration_guidance_metrics(self, frame, previous_metrics=None):
             return {
                 "hand_detected": True,
@@ -560,26 +563,40 @@ def test_runtime_blocks_clipped_hand_before_recognition():
             }
 
         def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
-            raise AssertionError("clipped hand must not be embedded")
+            self.embedding_calls += 1
+            return np.ones(4, dtype=np.float32)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.5, "closest_match": "Naufal", "user_id": None}
 
     class FakeDB:
+        def __init__(self):
+            self.logged = []
+
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, user_id, matched_name, status, similarity, duration_ms=None, description=None):
+            self.logged.append((user_id, matched_name, status, similarity, duration_ms, description))
+
         def upsert_device_status(self, **kwargs):
             self.status = kwargs
 
+    processor = FakeProcessor()
     runtime = DeviceRuntime(
         camera=FakeCamera(),
-        palm_processor=FakeProcessor(),
+        palm_processor=processor,
         db=FakeDB(),
         clock=FakeClock(),
         hold_ms=1000,
     )
 
     assert runtime.tick() is None
+    assert runtime.scan_state["stage"] == "holding"
     runtime.clock.now_ms = 1200
-    assert runtime.tick() is None
-    assert runtime.hand_seen_since_ms is None
-    assert runtime.scan_state["stage"] == "scan_quality_failed"
-    assert runtime.scan_state["failures"] == ["clipping"]
+    assert runtime.tick()["status"] == "DENIED"
+    assert processor.embedding_calls == 1
+    assert runtime.db.logged
 
 
 def test_runtime_does_not_recognize_without_detected_hand():
