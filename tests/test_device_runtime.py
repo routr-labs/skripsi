@@ -150,6 +150,76 @@ def test_runtime_embeds_sharpest_fresh_burst_frame_after_hold():
     assert processor.embedded_frame_mean == 130
 
 
+def test_runtime_does_not_block_low_blur_detected_hand_before_recognition():
+    from app.device_runtime import DeviceRuntime
+
+    class FakeClock:
+        def __init__(self):
+            self.now_ms = 0
+
+        def now(self):
+            return self.now_ms
+
+    class FakeCamera:
+        def __init__(self):
+            self.read_count = 0
+
+        def read(self):
+            self.read_count += 1
+            return np.full((2, 2, 3), 80, dtype=np.uint8)
+
+    class FakeProcessor:
+        def __init__(self):
+            self.embedding_calls = 0
+
+        def get_registration_guidance_metrics(self, frame, previous_metrics=None):
+            return {
+                "hand_detected": True,
+                "hand_clipped": False,
+                "brightness": 40.0,
+                "blur_score": 10.0,
+            }
+
+        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
+            self.embedding_calls += 1
+            return np.ones(4, dtype=np.float32)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.5, "closest_match": "Naufal", "user_id": None}
+
+    class FakeDB:
+        def __init__(self):
+            self.logged = []
+
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, user_id, matched_name, status, similarity, duration_ms=None, description=None):
+            self.logged.append((user_id, matched_name, status, similarity, duration_ms, description))
+
+        def upsert_device_status(self, **kwargs):
+            self.status = kwargs
+
+    processor = FakeProcessor()
+    runtime = DeviceRuntime(
+        camera=FakeCamera(),
+        palm_processor=processor,
+        db=FakeDB(),
+        clock=FakeClock(),
+        hold_ms=1000,
+    )
+    runtime.latest_frame = np.full((2, 2, 3), 80, dtype=np.uint8)
+
+    runtime.tick()
+    assert runtime.scan_state["stage"] == "holding"
+
+    runtime.clock.now_ms = 1200
+    runtime.tick()
+
+    assert processor.embedding_calls == 1
+    assert runtime.db.logged
+
+
 def test_runtime_unlocks_once_for_allowed_match():
     from app.device_runtime import DeviceRuntime
 

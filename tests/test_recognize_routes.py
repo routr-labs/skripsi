@@ -224,3 +224,55 @@ def test_recognize_burst_uses_sharpest_acceptable_frame(monkeypatch):
 
     assert response.status_code == 200
     assert processor.embedded_mean == 130
+
+
+def test_recognize_burst_does_not_reject_low_blur_detected_hand(monkeypatch):
+    import app.main as main
+    import app.routes.recognize as recognize_route
+
+    frames = {
+        "fallback": np.full((2, 2, 3), 20, dtype=np.uint8),
+        "soft": np.full((2, 2, 3), 10, dtype=np.uint8),
+        "sharpest": np.full((2, 2, 3), 30, dtype=np.uint8),
+        "middle": np.full((2, 2, 3), 20, dtype=np.uint8),
+    }
+
+    class FakeProcessor:
+        def __init__(self):
+            self.embedded_mean = None
+
+        def get_registration_guidance_metrics(self, frame, previous_metrics=None):
+            return {
+                "hand_detected": True,
+                "hand_clipped": False,
+                "brightness": 40.0,
+                "blur_score": float(frame.mean()),
+            }
+
+        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
+            self.embedded_mean = int(frame.mean())
+            return np.ones(4, dtype=np.float32)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.5, "closest_match": "Naufal", "user_id": None}
+
+    class FakeDB:
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, *args, **kwargs):
+            pass
+
+    processor = FakeProcessor()
+    monkeypatch.setattr(main, "palm_processor", processor)
+    monkeypatch.setattr(main, "db", FakeDB())
+    monkeypatch.setattr(recognize_route, "decode_base64_image", lambda image: frames[image])
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/recognize",
+        json={"image": "fallback", "images": ["soft", "sharpest", "middle"]},
+    )
+
+    assert response.status_code == 200
+    assert processor.embedded_mean == 30
