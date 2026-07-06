@@ -13,7 +13,7 @@ The first version must preserve the current UI and behavior, then add only:
 
 ## Chosen Approach
 
-Use a thin TanStack Start app in `frontend/` and keep FastAPI API-only.
+Use a thin TanStack Start app in `frontend/` and keep FastAPI API-only. This is a port of the current dashboard, not a redesign.
 
 ```text
 frontend/                  TanStack Start UI service
@@ -26,12 +26,20 @@ Development runs two processes:
 - TanStack Start dev server for the dashboard;
 - `uvicorn app.main:app` for `/api/*`, MJPEG preview, and SSE.
 
-The frontend proxies API calls to FastAPI in development. Production also runs two services.
+The frontend proxies API calls to FastAPI in development.
+
+Production also runs two services, but behind one browser origin:
+
+- `/` routes to the TanStack frontend;
+- `/api/*`, MJPEG preview, and SSE routes to FastAPI.
+
+Do not add CORS or separate-origin browser wiring unless deployment forces it.
 
 Rejected approaches:
 
 1. TanStack server functions/BFF: adds a second backend layer without enough benefit.
 2. Full admin redesign: higher risk and not requested; preserve the current camera-first UI instead.
+3. Global client state library for v1: React local state is enough until prop drilling becomes a real problem.
 
 ## Frontend Structure
 
@@ -45,32 +53,30 @@ frontend/
       index.tsx
     components/
       AppHeader.tsx
-      NavTabs.tsx
       ScanPanel.tsx
       RegisterPanel.tsx
       LogPanel.tsx
       UserList.tsx
     lib/
       api.ts
-      store.ts
-      camera.ts
       mediapipe.ts
-      registration.ts
 ```
 
-Use Zustand for shared UI state:
+Keep state local unless it is genuinely shared:
 
-- app state: current tab, USB mode, dev features, device status;
-- scan state: auto/manual mode, busy flag, stats, latest result;
-- registration state: selected hands, mode, sample counts, guidance;
-- log state: search, status filter, date range, page.
+- scan state lives in `ScanPanel`;
+- registration state lives in `RegisterPanel`;
+- log filters, count, page, and rows live in `LogPanel`;
+- user list state lives in `UserList` or the parent that renders it.
 
-Keep browser-only objects local to components/hooks, not in Zustand:
+Keep browser-only objects in component refs/local state, never module globals:
 
 - `MediaStream`;
 - `EventSource`;
 - video/canvas element refs;
 - uploaded file/base64 arrays.
+
+Split out `camera.ts`, `registration.ts`, or a store only when a file becomes painful to maintain.
 
 ## Backend API Changes
 
@@ -88,10 +94,28 @@ Content-Type: application/json
 Rules:
 
 - trim both fields;
-- reject empty NIM or name;
-- reject duplicate NIM;
+- reject empty NIM or name with `400`;
+- reject duplicate NIM with `409`;
+- return `404` when the user does not exist;
+- return the updated user row on success;
 - preserve embeddings;
 - preserve historical access logs.
+
+### User delete
+
+Keep the existing delete route:
+
+```http
+DELETE /api/users/{user_id}
+```
+
+Delete safety is UI-only in this iteration:
+
+- confirmation names the user;
+- explains that historical logs stay but lose the user link;
+- requires typing the user's NIM before deletion.
+
+This protects against accidental clicks. It is not an authorization boundary.
 
 ### Log filtering
 
@@ -108,6 +132,7 @@ Rules:
 - `q` searches matched name, description, and current user NIM when `user_id` still points to a user;
 - `status` accepts `ALLOWED` or `DENIED`;
 - `start_date` and `end_date` use native `YYYY-MM-DD` values;
+- date filters are inclusive and compare against `DATE(access_logs.timestamp)`;
 - CSV export returns the current filtered rows using Python stdlib `csv`.
 
 ## UI Behavior
@@ -178,12 +203,12 @@ This is acceptable only for localhost or a trusted LAN demo. Do not expose edit/
 
 Backend tests:
 
-- updating a user trims fields, rejects empty values, rejects duplicate NIM, and preserves embeddings;
+- updating a user trims fields, rejects empty values, rejects duplicate NIM, returns `404` for missing users, and preserves embeddings;
 - log list/count/export use the same filters for search, status, and date range.
 
 Frontend checks:
 
-- Zustand log filter changes reset the page;
+- log filter changes reset the page;
 - the TanStack dev proxy reaches FastAPI;
 - manual run verifies the Scan, Register, and Log tabs render and call the expected APIs.
 
@@ -194,4 +219,5 @@ Frontend checks:
 - Per-user hand/template detail pages.
 - Charts and summary cards.
 - TanStack server functions/BFF.
+- Global client store until local state becomes painful.
 - Full browser E2E tests.

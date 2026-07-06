@@ -1,6 +1,5 @@
 x-palmgate-common: &palmgate-common
-  image: ${PALMGATE_IMAGE:-ghcr.io/nhaidaar/palm-recognition-preview:latest}
-  container_name: palmgate
+  image: ${PALMGATE_IMAGE:-ghcr.io/nhaidaar/palmprint-be:latest}
   restart: unless-stopped
 
   env_file:
@@ -26,13 +25,27 @@ x-palmgate-common: &palmgate-common
 
 x-cloudflared-common: &cloudflared-common
   image: cloudflare/cloudflared:latest
-  container_name: palmgate-cloudflared
   restart: unless-stopped
   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 
+x-frontend-common: &frontend-common
+  image: ${PALMGATE_FRONTEND_IMAGE:-ghcr.io/nhaidaar/palmprint-fe:latest}
+  restart: unless-stopped
+  expose:
+    - "3000"
+
+x-proxy-common: &proxy-common
+  image: nginx:1.27-alpine
+  restart: unless-stopped
+  volumes:
+    - ./deploy/nginx/palmgate.conf:/etc/nginx/templates/default.conf.template:ro
+  ports:
+    - "${PALMGATE_HTTP_PORT:-8080}:8080"
+
 services:
-  palmgate-browser:
+  palmgate-api-browser:
     <<: *palmgate-common
+    container_name: palmgate-api-browser
     profiles: ["browser"]
     environment:
       # Database is stored in the named volume below so it survives rebuilds.
@@ -42,8 +55,25 @@ services:
       - DEVICE_RUNTIME_ENABLED=0
       - CAMERA_SOURCE=browser
 
-  palmgate-usb:
+  palmgate-frontend-browser:
+    <<: *frontend-common
+    container_name: palmgate-frontend-browser
+    profiles: ["browser"]
+
+  palmgate-proxy-browser:
+    <<: *proxy-common
+    container_name: palmgate-proxy-browser
+    profiles: ["browser"]
+    depends_on:
+      - palmgate-api-browser
+      - palmgate-frontend-browser
+    environment:
+      - PALMGATE_API_UPSTREAM=http://palmgate-api-browser:8000
+      - PALMGATE_FRONTEND_UPSTREAM=http://palmgate-frontend-browser:3000
+
+  palmgate-api-usb:
     <<: *palmgate-common
+    container_name: palmgate-api-usb
     profiles: ["usb"]
     environment:
       # Database is stored in the named volume below so it survives rebuilds.
@@ -64,17 +94,35 @@ services:
       - ${CAMERA_DEVICE_PATH:-/dev/video0}:${CAMERA_DEVICE_PATH:-/dev/video0}
       - ${LOCK_GPIO_CHIP:-/dev/gpiochip0}:${LOCK_GPIO_CHIP:-/dev/gpiochip0}
 
+  palmgate-frontend-usb:
+    <<: *frontend-common
+    container_name: palmgate-frontend-usb
+    profiles: ["usb"]
+
+  palmgate-proxy-usb:
+    <<: *proxy-common
+    container_name: palmgate-proxy-usb
+    profiles: ["usb"]
+    depends_on:
+      - palmgate-api-usb
+      - palmgate-frontend-usb
+    environment:
+      - PALMGATE_API_UPSTREAM=http://palmgate-api-usb:8000
+      - PALMGATE_FRONTEND_UPSTREAM=http://palmgate-frontend-usb:3000
+
   cloudflared-browser:
     <<: *cloudflared-common
+    container_name: palmgate-cloudflared-browser
     profiles: ["browser"]
     depends_on:
-      - palmgate-browser
+      - palmgate-proxy-browser
 
   cloudflared-usb:
     <<: *cloudflared-common
+    container_name: palmgate-cloudflared-usb
     profiles: ["usb"]
     depends_on:
-      - palmgate-usb
+      - palmgate-proxy-usb
 
 volumes:
   palmgate-db:
