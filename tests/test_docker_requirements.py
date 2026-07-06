@@ -126,3 +126,4 @@ def test_github_actions_publishes_ghcr_image_with_version_arg():
     assert "docker/build-push-action@v6" in workflow
     assert "platforms: linux/amd64,linux/arm64" in workflow
     assert "packages: write" in workflow
+    assert "feat/admin-dashboard" in workflow
