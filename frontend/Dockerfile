@@ -1,15 +1,15 @@
-FROM node:22-bookworm-slim AS deps
+FROM oven/bun:1 AS deps
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
-RUN npm run build
+RUN bun run build
 
-FROM node:22-bookworm-slim
+FROM oven/bun:1
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/.output ./.output
 EXPOSE 3000
-CMD ["node", ".output/server/index.mjs"]
+CMD ["bun", ".output/server/index.mjs"]

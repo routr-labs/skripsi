@@ -1,14 +1,17 @@
 from pathlib import Path
 
 
-def test_frontend_has_dockerfile_running_tanstack_start():
+def test_frontend_has_bun_dockerfile_running_tanstack_start():
     source = Path("frontend/Dockerfile").read_text()
 
-    assert "FROM node:" in source
-    assert "npm ci" in source
-    assert "npm run build" in source
+    assert "FROM oven/bun:1" in source
+    assert "bun install --frozen-lockfile" in source
+    assert "bun run build" in source
     assert "EXPOSE 3000" in source
-    assert 'CMD ["node", ".output/server/index.mjs"]' in source
+    assert 'CMD ["bun", ".output/server/index.mjs"]' in source
+    assert "npm ci" not in source
+    assert "npm run build" not in source
+    assert 'CMD ["node", ".output/server/index.mjs"]' not in source
 
 
 def test_nginx_proxy_routes_frontend_and_api_streams():
