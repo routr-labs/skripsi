@@ -20,6 +20,14 @@ def test_dockerfile_pins_bookworm_base_for_gpio_runtime_libs():
     assert "libgpiod2" in dockerfile
 
 
+def test_dockerfile_uses_uv_for_python_dependencies():
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "COPY --from=ghcr.io/astral-sh/uv:" in dockerfile
+    assert "uv pip install --system --no-cache-dir -r requirements.docker.txt" in dockerfile
+    assert "RUN pip install --no-cache-dir -r requirements.docker.txt" not in dockerfile
+
+
 def test_compose_passes_dotenv_values_to_palmgate_container():
     compose = Path("docker-compose.yml").read_text()
     common = compose[compose.index("x-palmgate-common:") : compose.index("x-cloudflared-common:")]

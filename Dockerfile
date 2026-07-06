@@ -2,6 +2,8 @@
 # python:3.11-slim-bookworm (Debian bookworm) gives us glibc so MediaPipe wheels work.
 FROM python:3.11-slim-bookworm AS builder
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # System libraries needed by MediaPipe and OpenCV on a headless Debian image
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
@@ -15,7 +17,7 @@ WORKDIR /app
 # Install Python deps in a separate layer so rebuilds after code changes
 # don't reinstall the ML packages.
 COPY requirements.docker.txt .
-RUN pip install --no-cache-dir -r requirements.docker.txt
+RUN uv pip install --system --no-cache-dir -r requirements.docker.txt
 
 # ── Runtime stage ─────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
