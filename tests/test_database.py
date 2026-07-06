@@ -60,6 +60,25 @@ def test_add_user_stores_embedding_hand_labels(db):
     assert embeddings[1]["hand"] == "right"
 
 
+def test_add_user_stores_five_embeddings_for_same_hand(db):
+    avg = np.ones(4, dtype=np.float32)
+    raws = [np.full(4, index, dtype=np.float32) for index in range(5)]
+
+    db.add_user(
+        "Alice",
+        avg,
+        nim="001",
+        individual_embeddings=raws,
+        embedding_hands=["left"] * 5,
+    )
+
+    embeddings = db.get_all_embeddings()
+    assert len(embeddings) == 5
+    assert [row["hand"] for row in embeddings] == ["left"] * 5
+    for index, row in enumerate(embeddings):
+        np.testing.assert_array_equal(row["embedding"], raws[index])
+
+
 def test_get_all_embeddings_returns_unknown_hand_for_legacy_user(db):
     emb = np.ones(4, dtype=np.float32)
     db.add_user("Legacy", emb, nim="999")

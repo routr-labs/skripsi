@@ -813,7 +813,7 @@ def test_capture_registration_sample_uses_selected_hand_sequence():
         raise AssertionError("Expected selected hand sequence limit")
 
 
-def test_finalize_registration_stores_one_template_per_hand():
+def test_finalize_registration_stores_five_embeddings_per_hand():
     from app.device_runtime import DeviceRuntime
 
     class FakeProcessor:
@@ -838,7 +838,9 @@ def test_finalize_registration_stores_one_template_per_hand():
             "sample_index": i,
             "hand": "left" if i < 5 else "right",
             "quality_score": 1.0,
-            "embedding": np.array([1.0, 0.0], dtype=np.float32) if i < 5 else np.array([0.0, 1.0], dtype=np.float32),
+            "embedding": np.array([float(i + 1), 0.0], dtype=np.float32)
+            if i < 5
+            else np.array([0.0, float(i - 4)], dtype=np.float32),
         }
         for i in range(10)
     ]
@@ -846,13 +848,15 @@ def test_finalize_registration_stores_one_template_per_hand():
     result = runtime.finalize_registration()
 
     assert result["user_id"] == 123
-    assert result["stored_embeddings"] == 2
+    assert result["stored_embeddings"] == 10
     assert result["nim"] == "12345"
-    assert result["hands"] == {"left": 1, "right": 1}
+    assert result["hands"] == {"left": 5, "right": 5}
     assert runtime.db.added[0] == "12345"
     assert runtime.db.added[1] == "Alice"
-    assert len(runtime.db.added[3]) == 2
-    assert runtime.db.added[4] == ["left", "right"]
+    assert len(runtime.db.added[3]) == 10
+    assert runtime.db.added[4] == ["left"] * 5 + ["right"] * 5
+    assert [float(embedding[0]) for embedding in runtime.db.added[3]] == [1, 2, 3, 4, 5, 0, 0, 0, 0, 0]
+    assert [float(embedding[1]) for embedding in runtime.db.added[3]] == [0, 0, 0, 0, 0, 1, 2, 3, 4, 5]
     assert runtime.registration_session is None
     assert runtime.worker_state == "running"
 

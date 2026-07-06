@@ -291,12 +291,19 @@ class DeviceRuntime:
             except ValueError as exc:
                 raise RuntimeError("Not enough valid registration samples") from exc
 
-            embedding_hands = list(templates.keys())
-            embeddings = [templates[hand].astype(np.float32) for hand in embedding_hands]
+            template_hands = list(templates.keys())
+            template_embeddings = [templates[hand].astype(np.float32) for hand in template_hands]
+            raw_embeddings = []
+            raw_embedding_hands = []
+            for hand in self.registration_session.hands:
+                for sample in samples:
+                    if sample["hand"] == hand:
+                        raw_embeddings.append(sample["embedding"].astype(np.float32))
+                        raw_embedding_hands.append(hand)
             avg_embedding = overall_template(templates)
 
             stored = self.db.get_all_embeddings()
-            for embedding in embeddings:
+            for embedding in template_embeddings:
                 duplicate = self.palm_processor.compute_similarity(embedding, stored, DUPLICATE_THRESHOLD)
                 if duplicate["status"] == "ALLOWED":
                     raise RuntimeError(f"This palm is already registered as '{duplicate['name']}'")
@@ -306,8 +313,8 @@ class DeviceRuntime:
                     self.registration_session.name,
                     avg_embedding,
                     nim=self.registration_session.nim,
-                    individual_embeddings=embeddings,
-                    embedding_hands=embedding_hands,
+                    individual_embeddings=raw_embeddings,
+                    embedding_hands=raw_embedding_hands,
                 )
             except ValueError as exc:
                 raise RuntimeError(str(exc)) from exc
@@ -320,8 +327,8 @@ class DeviceRuntime:
                 "user_id": user_id,
                 "nim": nim,
                 "name": name,
-                "stored_embeddings": len(embeddings),
-                "hands": {hand: embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
+                "stored_embeddings": len(raw_embeddings),
+                "hands": {hand: raw_embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
             }
 
     def tick(self):

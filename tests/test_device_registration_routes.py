@@ -200,7 +200,7 @@ def test_finalize_endpoint_returns_user(monkeypatch):
 
     class FakeRuntime:
         def finalize_registration(self):
-            return {"user_id": 10, "name": "Alice", "stored_embeddings": 2}
+            return {"user_id": 10, "name": "Alice", "stored_embeddings": 10}
 
     monkeypatch.setattr(main, "device_runtime", FakeRuntime())
     client = TestClient(app)
@@ -209,7 +209,7 @@ def test_finalize_endpoint_returns_user(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["user_id"] == 10
-    assert response.json()["stored_embeddings"] == 2
+    assert response.json()["stored_embeddings"] == 10
 
 
 def test_usb_preview_endpoint_returns_latest_frame(monkeypatch):

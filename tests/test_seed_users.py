@@ -11,9 +11,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class FakePalmProcessor:
+    def __init__(self):
+        self.tta_values = []
+
     def get_embedding(self, frame_rgb, tta_enabled=False):
+        self.tta_values.append(tta_enabled)
         value = float(frame_rgb[0, 0, 0])
         return np.array([value, value + 1, value + 2, value + 3], dtype=np.float32)
+
+    def compute_similarity(self, embedding, stored, threshold):
+        return {"status": "DENIED", "name": "Unknown", "similarity": 0.0}
 
 
 def test_parse_seed_identity_requires_nim_name_format():
@@ -73,7 +80,7 @@ def test_seed_users_from_directory_uses_nim_file_stems_and_preserves_logs(tmp_pa
     assert len(db.get_all_embeddings()) == 2
 
 
-def test_seed_users_from_person_folders_stores_one_template_per_person(tmp_path):
+def test_seed_users_from_person_folders_stores_each_valid_frame_embedding(tmp_path):
     from app.services.seed_users import seed_users_from_directory
 
     seed_dir = tmp_path / "Dataset_Webcam"
@@ -102,7 +109,9 @@ def test_seed_users_from_person_folders_stores_one_template_per_person(tmp_path)
     assert summary.failed == {}
     assert [user["nim"] for user in db.get_all_users()] == ["001", "002"]
     assert [user["name"] for user in db.get_all_users()] == ["Afrizal", "Naufal"]
-    assert len(db.get_all_embeddings()) == 2
+    embeddings = db.get_all_embeddings()
+    assert len(embeddings) == 12
+    assert [entry["hand"] for entry in embeddings] == ["unknown"] * 12
 
 
 def test_seed_users_skips_existing_names_by_default(tmp_path):
@@ -239,7 +248,7 @@ def test_seed_users_plain_folders_use_stable_demo_nims_when_enabled(tmp_path):
     assert summary.failed == {}
     assert [user["nim"] for user in db.get_all_users()] == ["SEED-001", "SEED-002", "SEED-003", "SEED-004"]
     assert [user["name"] for user in db.get_all_users()] == ["Afrizal", "Naufal", "Reza", "Rizky"]
-    assert [entry["hand"] for entry in db.get_all_embeddings()] == ["unknown", "unknown", "unknown", "unknown"]
+    assert [entry["hand"] for entry in db.get_all_embeddings()] == ["unknown"] * 8
 
 
 def test_seed_script_exposes_auto_demo_nim_flag():
@@ -247,3 +256,105 @@ def test_seed_script_exposes_auto_demo_nim_flag():
 
     assert "--auto-demo-nim" in source
     assert "auto_demo_nim=args.auto_demo_nim" in source
+
+
+def test_system_register_layout_creates_one_user_per_hand_with_stable_nims(tmp_path):
+    from app.services.seed_users import seed_system_register_users_from_directory
+
+    seed_dir = tmp_path / "register"
+    for folder in ["Fauzan Habibi_L", "Fauzan Habibi_R", "Naufal Haidar_L", "Naufal Haidar_R"]:
+        person_dir = seed_dir / folder
+        person_dir.mkdir(parents=True)
+        for index in range(5):
+            (person_dir / f"sample_{index}.jpg").write_bytes(b"image")
+
+    db = Database(tmp_path / "palmprint.db")
+    processor = FakePalmProcessor()
+
+    def read_image(path):
+        values = {
+            "Fauzan Habibi_L": 10,
+            "Fauzan Habibi_R": 20,
+            "Naufal Haidar_L": 30,
+            "Naufal Haidar_R": 40,
+        }
+        return np.full((80, 80, 3), values[path.parent.name] + int(path.stem.split("_")[-1]), dtype=np.uint8)
+
+    summary = seed_system_register_users_from_directory(
+        seed_dir,
+        db,
+        processor,
+        read_image=read_image,
+    )
+
+    assert summary.created == [
+        "Fauzan Habibi (left)",
+        "Fauzan Habibi (right)",
+        "Naufal Haidar (left)",
+        "Naufal Haidar (right)",
+    ]
+    assert summary.skipped == []
+    assert summary.failed == {}
+    assert [(user["nim"], user["name"]) for user in db.get_all_users()] == [
+        ("1-L", "Fauzan Habibi"),
+        ("1-R", "Fauzan Habibi"),
+        ("2-L", "Naufal Haidar"),
+        ("2-R", "Naufal Haidar"),
+    ]
+    assert [entry["hand"] for entry in db.get_all_embeddings()] == ["left"] * 5 + ["right"] * 5 + ["left"] * 5 + ["right"] * 5
+    assert processor.tta_values == [True] * 20
+
+
+def test_system_register_layout_rejects_folders_without_hand_suffix(tmp_path):
+    from app.services.seed_users import seed_system_register_users_from_directory
+
+    seed_dir = tmp_path / "register"
+    person_dir = seed_dir / "Fauzan Habibi"
+    person_dir.mkdir(parents=True)
+    for index in range(5):
+        (person_dir / f"sample_{index}.jpg").write_bytes(b"image")
+
+    db = Database(tmp_path / "palmprint.db")
+
+    summary = seed_system_register_users_from_directory(
+        seed_dir,
+        db,
+        FakePalmProcessor(),
+        read_image=lambda path: np.full((80, 80, 3), 10, dtype=np.uint8),
+    )
+
+    assert summary.created == []
+    assert summary.skipped == []
+    assert "Fauzan Habibi" in summary.failed
+    assert "_L or _R" in summary.failed["Fauzan Habibi"]
+
+
+def test_system_register_layout_requires_five_valid_samples(tmp_path):
+    from app.services.seed_users import seed_system_register_users_from_directory
+
+    seed_dir = tmp_path / "register"
+    person_dir = seed_dir / "Fauzan Habibi_L"
+    person_dir.mkdir(parents=True)
+    for index in range(4):
+        (person_dir / f"sample_{index}.jpg").write_bytes(b"image")
+
+    db = Database(tmp_path / "palmprint.db")
+
+    summary = seed_system_register_users_from_directory(
+        seed_dir,
+        db,
+        FakePalmProcessor(),
+        read_image=lambda path: np.full((80, 80, 3), 10, dtype=np.uint8),
+    )
+
+    assert summary.created == []
+    assert "Fauzan Habibi_L" in summary.failed
+    assert "Not enough valid left samples" in summary.failed["Fauzan Habibi_L"]
+
+
+def test_seed_script_exposes_system_register_layout_flag():
+    source = (ROOT / "scripts" / "seed_users.py").read_text()
+
+    assert "--system-register-layout" in source
+    assert "seed_system_register_users_from_directory" in source
+    assert "system_register_layout=args.system_register_layout" not in source

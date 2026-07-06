@@ -71,7 +71,7 @@ def test_register_rejects_unbalanced_hand_labels():
     assert "5 images for each selected hand" in response.json()["detail"]
 
 
-def test_register_saves_two_hand_templates_with_nim(monkeypatch):
+def test_register_saves_five_embeddings_per_selected_hand_with_nim(monkeypatch):
     import app.main as main
     import app.routes.register as register_route
 
@@ -90,8 +90,9 @@ def test_register_saves_two_hand_templates_with_nim(monkeypatch):
 
     assert response.status_code == 200
     assert fake_db.nim == "12345"
-    assert len(fake_db.individual_embeddings) == 2
-    assert fake_db.embedding_hands == ["left", "right"]
+    assert len(fake_db.individual_embeddings) == 10
+    assert fake_db.embedding_hands == ["left"] * 5 + ["right"] * 5
+    assert [float(emb[0]) for emb in fake_db.individual_embeddings] == list(range(1, 11))
     assert fake_processor.similarity_checks == 2
 
 
@@ -159,7 +160,7 @@ def test_register_rejects_duplicate_nim(monkeypatch):
     assert "NIM already exists" in response.json()["detail"]
 
 
-def test_register_saves_left_only_template(monkeypatch):
+def test_register_saves_left_only_embeddings(monkeypatch):
     import app.main as main
     import app.routes.register as register_route
 
@@ -176,12 +177,13 @@ def test_register_saves_left_only_template(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert len(fake_db.individual_embeddings) == 1
-    assert fake_db.embedding_hands == ["left"]
+    assert len(fake_db.individual_embeddings) == 5
+    assert fake_db.embedding_hands == ["left"] * 5
+    assert [float(emb[0]) for emb in fake_db.individual_embeddings] == [1, 2, 3, 4, 5]
     assert fake_processor.similarity_checks == 1
 
 
-def test_register_saves_right_only_template(monkeypatch):
+def test_register_saves_right_only_embeddings(monkeypatch):
     import app.main as main
     import app.routes.register as register_route
 
@@ -198,8 +200,9 @@ def test_register_saves_right_only_template(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert len(fake_db.individual_embeddings) == 1
-    assert fake_db.embedding_hands == ["right"]
+    assert len(fake_db.individual_embeddings) == 5
+    assert fake_db.embedding_hands == ["right"] * 5
+    assert [float(emb[0]) for emb in fake_db.individual_embeddings] == [1, 2, 3, 4, 5]
     assert fake_processor.similarity_checks == 1
 
 

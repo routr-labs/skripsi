@@ -105,8 +105,15 @@ async def register(req: RegisterRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    embedding_hands = list(templates.keys())
-    template_embeddings = [templates[hand] for hand in embedding_hands]
+    template_hands = list(templates.keys())
+    template_embeddings = [templates[hand] for hand in template_hands]
+    raw_embeddings = []
+    raw_embedding_hands = []
+    for hand in selected_hands:
+        for sample in samples:
+            if sample["hand"] == hand:
+                raw_embeddings.append(sample["embedding"])
+                raw_embedding_hands.append(hand)
     avg_embedding = overall_template(templates)
 
     stored = db.get_all_embeddings()
@@ -125,8 +132,8 @@ async def register(req: RegisterRequest):
             req.name.strip(),
             avg_embedding,
             nim=nim,
-            individual_embeddings=template_embeddings,
-            embedding_hands=embedding_hands,
+            individual_embeddings=raw_embeddings,
+            embedding_hands=raw_embedding_hands,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
