@@ -6,9 +6,6 @@
   <title>PalmGate — Palm access</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="shortcut icon" href="/static/favicon.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -119,6 +116,10 @@
             <button class="btn btn-mode" id="btnMode" aria-label="Toggle auto-detect mode">
               Auto
             </button>
+            <label class="btn btn-secondary dev-only scan-upload-btn" id="scanUploadLabel" hidden>
+              Upload photo
+              <input class="scan-upload-input" id="scanUploadFile" type="file" accept="image/*" />
+            </label>
           </div>
         </div>
 
@@ -162,6 +163,10 @@
                   <span class="meta-value" id="resultTimestamp">—</span>
                 </div>
               </div>
+              <div class="roi-preview dev-only" id="roiPreview" hidden>
+                <div class="roi-preview-label">ROI used for embedding</div>
+                <img id="roiPreviewImage" alt="Processed palm ROI used for recognition" />
+              </div>
             </div>
 
             <div class="result-scanning" id="resultScanning" style="display:none;">
@@ -173,6 +178,7 @@
           </div>
 
           <div class="device-status-card" id="deviceStatusCard">
+            <div class="device-status-row"><span>Version</span><strong id="appVersion">local</strong></div>
             <div class="device-status-row"><span>Worker</span><strong id="deviceWorkerState">disabled</strong></div>
             <div class="device-status-row"><span>Camera</span><strong id="deviceCameraState">offline</strong></div>
             <div class="device-status-row"><span>FPS</span><strong id="deviceFps">—</strong></div>
@@ -260,7 +266,19 @@
         <div class="register-form-col">
           <div class="form-block">
             <h2 class="form-title">Register new user</h2>
-            <p class="form-desc">Follow 5 left-hand and 5 right-hand captures to enroll. PalmGate stores both palms so either hand can unlock.</p>
+            <p class="form-desc">Choose left, right, or both. Default captures 5 left-hand and 5 right-hand samples so either hand can unlock.</p>
+
+            <div class="field-group">
+              <label class="field-label" for="userNim">NIM</label>
+              <input
+                class="field-input"
+                type="text"
+                id="userNim"
+                placeholder="Enter NIM…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
 
             <div class="field-group">
               <label class="field-label" for="userName">Full name</label>
@@ -274,42 +292,114 @@
               />
             </div>
 
-            <div class="registration-status" id="registrationStatus">
-              <div class="sample-title" id="regSampleTitle">Left hand sample 1/5: Center palm</div>
-              <div class="sample-desc" id="regSampleDesc">Use your actual left hand: palm facing camera, fingers up, wrist visible.</div>
-              <div class="capture-counter-inline">Samples captured: <strong id="captureCounter">Left 0/5 · Right 0/5</strong></div>
-              <div class="capture-dots hand-dots" id="captureDots">
-                <div class="capture-dot-group" data-hand="left">
-                  <span class="dot-label">Left</span>
-                  <span class="dot" data-hand="left" data-i="0"></span>
-                  <span class="dot" data-hand="left" data-i="1"></span>
-                  <span class="dot" data-hand="left" data-i="2"></span>
-                  <span class="dot" data-hand="left" data-i="3"></span>
-                  <span class="dot" data-hand="left" data-i="4"></span>
+            <div class="registration-mode-tabs" id="registrationModeTabs" role="tablist" aria-label="Registration method">
+              <button
+                class="registration-mode-tab active"
+                id="cameraRegistrationTab"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="cameraRegistrationPanel"
+                data-registration-mode="camera"
+              >
+                <strong>Camera capture</strong>
+                <span>Guided live captures</span>
+              </button>
+              <button
+                class="registration-mode-tab dev-only"
+                id="uploadRegistrationTab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="uploadRegistrationPanel"
+                data-registration-mode="upload"
+                hidden
+              >
+                <strong>Upload images</strong>
+                <span>Selected hands · 5 photos each</span>
+              </button>
+            </div>
+
+            <div class="registration-mode-panel active" id="cameraRegistrationPanel" data-registration-mode-panel="camera" role="tabpanel" aria-labelledby="cameraRegistrationTab">
+              <div class="registration-status" id="registrationStatus">
+                <div class="registration-hand-select" aria-label="Hands to register">
+                  <button class="registration-hand-chip active" id="registrationLeftHand" type="button" data-hand-toggle="left" aria-pressed="true">Left <span id="registrationLeftCount">0/5</span></button>
+                  <button class="registration-hand-chip active" id="registrationRightHand" type="button" data-hand-toggle="right" aria-pressed="true">Right <span id="registrationRightCount">0/5</span></button>
                 </div>
-                <div class="capture-dot-group" data-hand="right">
-                  <span class="dot-label">Right</span>
-                  <span class="dot" data-hand="right" data-i="0"></span>
-                  <span class="dot" data-hand="right" data-i="1"></span>
-                  <span class="dot" data-hand="right" data-i="2"></span>
-                  <span class="dot" data-hand="right" data-i="3"></span>
-                  <span class="dot" data-hand="right" data-i="4"></span>
+                <div class="sample-title" id="regSampleTitle">Left hand sample 1/5: Center palm</div>
+                <div class="sample-desc" id="regSampleDesc">Use your actual left hand: palm facing camera, fingers up, wrist visible.</div>
+                <div class="capture-dots hand-dots" id="captureDots">
+                  <div class="capture-dot-group" data-hand="left">
+                    <span class="dot-label">Left</span>
+                    <span class="dot" data-hand="left" data-i="0"></span>
+                    <span class="dot" data-hand="left" data-i="1"></span>
+                    <span class="dot" data-hand="left" data-i="2"></span>
+                    <span class="dot" data-hand="left" data-i="3"></span>
+                    <span class="dot" data-hand="left" data-i="4"></span>
+                  </div>
+                  <div class="capture-dot-group" data-hand="right">
+                    <span class="dot-label">Right</span>
+                    <span class="dot" data-hand="right" data-i="0"></span>
+                    <span class="dot" data-hand="right" data-i="1"></span>
+                    <span class="dot" data-hand="right" data-i="2"></span>
+                    <span class="dot" data-hand="right" data-i="3"></span>
+                    <span class="dot" data-hand="right" data-i="4"></span>
+                  </div>
+                </div>
+                <div class="registration-quality-line neutral" id="registrationQualityLine">Enter NIM and name to start.</div>
+              </div>
+
+              <div class="register-hint" id="registerHint">
+                Enter NIM and name, then start registration to capture 5 left-hand and 5 right-hand samples.
+              </div>
+
+              <div class="register-actions">
+                <button class="btn btn-primary" id="btnStartRegistration">Start registration</button>
+                <button class="btn btn-secondary" id="btnCaptureSample" disabled>Capture sample</button>
+                <button class="btn btn-primary" id="btnFinalizeRegistration" disabled>Finalize</button>
+                <button class="btn btn-ghost" id="btnCancelRegistration" disabled>Cancel</button>
+              </div>
+            </div>
+
+            <div class="registration-mode-panel dev-only" id="uploadRegistrationPanel" data-registration-mode-panel="upload" role="tabpanel" aria-labelledby="uploadRegistrationTab" hidden>
+              <div class="registration-hand-select upload-hand-select" aria-label="Hands to upload">
+                <button class="registration-hand-chip active" id="uploadRegistrationLeftHand" type="button" data-hand-toggle="left" aria-pressed="true">Left <span id="uploadRegistrationLeftCount">0/5</span></button>
+                <button class="registration-hand-chip active" id="uploadRegistrationRightHand" type="button" data-hand-toggle="right" aria-pressed="true">Right <span id="uploadRegistrationRightCount">0/5</span></button>
+              </div>
+              <div class="upload-registration-grid">
+                <div class="upload-picker" id="uploadLeftPicker">
+                  <div class="upload-picker-head">
+                    <strong>Left hand photos</strong>
+                    <span class="upload-count" id="uploadLeftCount">0/5</span>
+                  </div>
+                  <label class="upload-file-label" for="uploadLeftFiles">
+                    <input class="upload-file-input" id="uploadLeftFiles" type="file" accept="image/*" multiple />
+                    <span>Select exactly 5 full-hand photos</span>
+                  </label>
+                  <div class="upload-file-list" id="uploadLeftList">No files selected.</div>
+                </div>
+
+                <div class="upload-picker" id="uploadRightPicker">
+                  <div class="upload-picker-head">
+                    <strong>Right hand photos</strong>
+                    <span class="upload-count" id="uploadRightCount">0/5</span>
+                  </div>
+                  <label class="upload-file-label" for="uploadRightFiles">
+                    <input class="upload-file-input" id="uploadRightFiles" type="file" accept="image/*" multiple />
+                    <span>Select exactly 5 full-hand photos</span>
+                  </label>
+                  <div class="upload-file-list" id="uploadRightList">No files selected.</div>
                 </div>
               </div>
-              <ul class="quality-list" id="qualityList">
-                <li><span>Status</span><strong class="neutral">Enter name to start</strong></li>
-              </ul>
-            </div>
 
-            <div class="register-hint" id="registerHint">
-              Enter a name, then start registration to capture 5 left-hand and 5 right-hand samples.
-            </div>
+              <div class="register-hint" id="uploadRegisterHint">
+                Selected hands need exactly 5 full-hand photos each. PalmGate will detect the palm ROI with the same runtime MediaPipe path.
+              </div>
 
-            <div class="register-actions">
-              <button class="btn btn-primary" id="btnStartRegistration">Start registration</button>
-              <button class="btn btn-secondary" id="btnCaptureSample" disabled>Capture sample</button>
-              <button class="btn btn-primary" id="btnFinalizeRegistration" disabled>Finalize</button>
-              <button class="btn btn-ghost" id="btnCancelRegistration" disabled>Cancel</button>
+              <div class="register-actions upload-register-actions">
+                <button class="btn btn-primary" id="btnUploadRegister" type="button" disabled>Register from uploads</button>
+                <button class="btn btn-ghost" id="btnClearUploadFiles" type="button">Clear files</button>
+              </div>
             </div>
 
             <div class="register-feedback" id="registerFeedback"></div>
@@ -380,8 +470,22 @@
         <div class="users-header">
           <h3 class="users-title">Enrolled users</h3>
         </div>
-        <div class="users-grid" id="usersGrid">
-          <div class="users-empty">No users enrolled yet.</div>
+        <div class="users-table-wrap">
+          <table class="users-table">
+            <thead>
+              <tr>
+                <th>NIM</th>
+                <th>Name</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody">
+              <tr class="users-empty-row">
+                <td colspan="4"><div class="users-empty">No users enrolled yet.</div></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

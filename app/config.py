@@ -1,12 +1,73 @@
+import json
+import logging
 import os
 from pathlib import Path
 
+log = logging.getLogger("palmgate.config")
+
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "palm_recognition.tflite"
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        log.warning("Could not read env file %s: %s", path, exc)
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value.strip().strip('"').strip("'")
+
+
+if os.getenv("PALMGATE_SKIP_DOTENV", "0") != "1":
+    _load_env_file(BASE_DIR / ".env")
+
+DEFAULT_MODEL_VERSION = "embedding_new_roi_v2"
+DEFAULT_MODEL_DIR = BASE_DIR / "models" / "embedding"
+DEFAULT_MODEL_FILENAME = "palm_embedding.tflite"
+VERSIONED_MODEL_FILENAME = "model.tflite"
+DEFAULT_MODEL_METADATA_FILENAME = "model_metadata.json"
+DEFAULT_SIMILARITY_THRESHOLD = 0.745932400226593
+DEFAULT_EMBEDDING_DIM = 128
+DEFAULT_TTA_ROTATIONS = (0.0, -6.0, 6.0)
+
+MODEL_VERSION = os.getenv("MODEL_VERSION", DEFAULT_MODEL_VERSION).strip()
+MODEL_DIR = BASE_DIR / "models" / MODEL_VERSION if MODEL_VERSION else DEFAULT_MODEL_DIR
+MODEL_PATH = Path(os.getenv(
+    "MODEL_PATH",
+    str(MODEL_DIR / (VERSIONED_MODEL_FILENAME if MODEL_VERSION else DEFAULT_MODEL_FILENAME)),
+))
+MODEL_METADATA_PATH = Path(os.getenv("MODEL_METADATA_PATH", str(MODEL_DIR / DEFAULT_MODEL_METADATA_FILENAME)))
 HAND_LANDMARKER_PATH = BASE_DIR / "hand_landmarker.task"
+
+
+def _load_model_metadata(path: Path = MODEL_METADATA_PATH) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+MODEL_METADATA = _load_model_metadata()
 
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
+
+APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
+if APP_ENV not in {"development", "production"}:
+    APP_ENV = "production"
+DEV_FEATURES_ENABLED = APP_ENV == "development"
+PALMGATE_VERSION = os.getenv("PALMGATE_VERSION", "local").strip() or "local"
 
 # DB_PATH can be overridden via environment variable for Docker deployments
 # e.g. DB_PATH=/data/palmprint.db → mount a named volume at /data
@@ -14,22 +75,36 @@ DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "palmprint.db")))
 
 DEVICE_RUNTIME_ENABLED = os.getenv("DEVICE_RUNTIME_ENABLED", "0") == "1"
 CAMERA_SOURCE = os.getenv("CAMERA_SOURCE", "browser")
-CAMERA_DEVICE_INDEX = int(os.getenv("CAMERA_DEVICE_INDEX", "0"))
-CAMERA_DEVICE_PATH = os.getenv("CAMERA_DEVICE_PATH")
+CAMERA_DEVICE_PATH = os.getenv("CAMERA_DEVICE_PATH", "/dev/video0")
 DEVICE_FRAME_INTERVAL_MS = int(os.getenv("DEVICE_FRAME_INTERVAL_MS", "250"))
 DEVICE_PREVIEW_FRAME_INTERVAL_MS = int(os.getenv("DEVICE_PREVIEW_FRAME_INTERVAL_MS", "33"))
 DEVICE_HOLD_MS = int(os.getenv("DEVICE_HOLD_MS", "1200"))
 DEVICE_COOLDOWN_MS = int(os.getenv("DEVICE_COOLDOWN_MS", "3000"))
 DEVICE_STATUS_HEARTBEAT_MS = int(os.getenv("DEVICE_STATUS_HEARTBEAT_MS", "1000"))
+LOCK_GPIO_ENABLED = os.getenv("LOCK_GPIO_ENABLED", "0") == "1"
+LOCK_GPIO_CHIP = os.getenv("LOCK_GPIO_CHIP", "/dev/gpiochip0")
+LOCK_GPIO_LINE = os.getenv("LOCK_GPIO_LINE", "75")
+LOCK_ACTIVE_LOW = os.getenv("LOCK_ACTIVE_LOW", "1") == "1"
+LOCK_UNLOCK_MS = int(os.getenv("LOCK_UNLOCK_MS", "2000"))
 NOTEBOOK_REMBG_ENABLED = os.getenv("NOTEBOOK_REMBG_ENABLED", "1") == "1"
 NOTEBOOK_REMBG_MODEL = os.getenv("NOTEBOOK_REMBG_MODEL", "u2net")
 
-SIMILARITY_THRESHOLD = 0.75
-DUPLICATE_THRESHOLD  = 0.75   # block registration if palm already matches at this level
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", str(MODEL_METADATA.get("embedding_dim", DEFAULT_EMBEDDING_DIM))))
+SIMILARITY_THRESHOLD = float(os.getenv(
+    "SIMILARITY_THRESHOLD",
+    str(MODEL_METADATA.get("operating_threshold", DEFAULT_SIMILARITY_THRESHOLD)),
+))
+DUPLICATE_THRESHOLD = float(os.getenv("DUPLICATE_THRESHOLD", str(SIMILARITY_THRESHOLD)))
+
+_tta_value = MODEL_METADATA.get("tta_rotations", DEFAULT_TTA_ROTATIONS)
+TTA_ROTATIONS = tuple(float(value) for value in _tta_value)
+ENROLLMENT_TTA_ENABLED = os.getenv("ENROLLMENT_TTA_ENABLED", "1") == "1"
+RECOGNITION_TTA_ENABLED = os.getenv("RECOGNITION_TTA_ENABLED", "0") == "1"
+
 REGISTRATION_HANDS = ("left", "right")
 REGISTRATION_CAPTURES_PER_HAND = 5
 REGISTRATION_TOTAL_CAPTURES = REGISTRATION_CAPTURES_PER_HAND * len(REGISTRATION_HANDS)
-REGISTRATION_STORE_EMBEDDINGS_PER_HAND = 5
+REGISTRATION_STORE_EMBEDDINGS_PER_HAND = REGISTRATION_CAPTURES_PER_HAND
 REGISTRATION_MIN_VALID_PER_HAND = 5
 REGISTRATION_CAPTURES = REGISTRATION_TOTAL_CAPTURES
 USB_REGISTRATION_CAPTURES = REGISTRATION_TOTAL_CAPTURES
@@ -42,3 +117,5 @@ USB_REGISTRATION_MAX_BRIGHTNESS = 220.0
 IMG_SIZE = (224, 224)
 CLAHE_CLIP_LIMIT = 2.0
 CLAHE_TILE_GRID = (8, 8)
+MIN_PALM_WIDTH = 40.0
+PALM_ROI_SCALE = 1.5

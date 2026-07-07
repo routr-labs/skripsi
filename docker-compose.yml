@@ -1,18 +1,21 @@
 x-palmgate-common: &palmgate-common
-  build: .
-  container_name: palmgate
+  image: ${PALMGATE_IMAGE:-ghcr.io/nhaidaar/palmprint-be:latest}
   restart: unless-stopped
+
+  env_file:
+    - .env
 
   expose:
     - "8000"
 
   volumes:
-    # ML model files — copy these to the Orange Pi once (they are gitignored):
-    #   scp palm_recognition.tflite hand_landmarker.task orangepi:/opt/palmgate/
-    - ./palm_recognition.tflite:/app/palm_recognition.tflite:ro
+    # ML model files live under the project models/ directory.
+    - ${PALMGATE_MODELS_DIR:-./models}/${MODEL_VERSION:-embedding_new_roi_v2}:/app/models/${MODEL_VERSION:-embedding_new_roi_v2}:ro
     - ./hand_landmarker.task:/app/hand_landmarker.task:ro
-    # Persistent storage for the SQLite database
+    # Persistent storage for the SQLite database.
     - palmgate-db:/data
+    # Save registration captures into ./data/captures on the host.
+    - ./data/captures:/data/captures
 
   # Optional: uncomment to limit resource usage on a small VPS
   # deploy:
@@ -22,50 +25,104 @@ x-palmgate-common: &palmgate-common
 
 x-cloudflared-common: &cloudflared-common
   image: cloudflare/cloudflared:latest
-  container_name: palmgate-cloudflared
   restart: unless-stopped
   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 
+x-frontend-common: &frontend-common
+  image: ${PALMGATE_FRONTEND_IMAGE:-ghcr.io/nhaidaar/palmprint-fe:latest}
+  restart: unless-stopped
+  expose:
+    - "3000"
+
+x-proxy-common: &proxy-common
+  image: nginx:1.27-alpine
+  restart: unless-stopped
+  volumes:
+    - ./deploy/nginx/palmgate.conf:/etc/nginx/templates/default.conf.template:ro
+  ports:
+    - "${PALMGATE_HTTP_PORT:-8080}:8080"
+
 services:
-  palmgate-browser:
+  palmgate-api-browser:
     <<: *palmgate-common
+    container_name: palmgate-api-browser
     profiles: ["browser"]
     environment:
       # Database is stored in the named volume below so it survives rebuilds.
       - DB_PATH=/data/palmprint.db
+      - MODEL_VERSION=${MODEL_VERSION:-embedding_new_roi_v2}
       # Browser mode: use a phone/laptop camera through the web UI.
       - DEVICE_RUNTIME_ENABLED=0
       - CAMERA_SOURCE=browser
-      - NOTEBOOK_REMBG_ENABLED=0
 
-  palmgate-usb:
+  palmgate-frontend-browser:
+    <<: *frontend-common
+    container_name: palmgate-frontend-browser
+    profiles: ["browser"]
+
+  palmgate-proxy-browser:
+    <<: *proxy-common
+    container_name: palmgate-proxy-browser
+    profiles: ["browser"]
+    depends_on:
+      - palmgate-api-browser
+      - palmgate-frontend-browser
+    environment:
+      - PALMGATE_API_UPSTREAM=http://palmgate-api-browser:8000
+      - PALMGATE_FRONTEND_UPSTREAM=http://palmgate-frontend-browser:3000
+
+  palmgate-api-usb:
     <<: *palmgate-common
+    container_name: palmgate-api-usb
     profiles: ["usb"]
     environment:
       # Database is stored in the named volume below so it survives rebuilds.
       - DB_PATH=/data/palmprint.db
+      - MODEL_VERSION=${MODEL_VERSION:-embedding_new_roi_v2}
       # USB mode: use the Orange Pi USB camera for registration and recognition.
       - DEVICE_RUNTIME_ENABLED=1
       - CAMERA_SOURCE=usb
-      - CAMERA_DEVICE_PATH=/dev/video1
+      - CAMERA_DEVICE_PATH=${CAMERA_DEVICE_PATH:-/dev/video0}
       - DEVICE_PREVIEW_FRAME_INTERVAL_MS=33
       - DEVICE_FRAME_INTERVAL_MS=250
-      - NOTEBOOK_REMBG_ENABLED=0
-      - NOTEBOOK_REMBG_MODEL=silueta
+      - LOCK_GPIO_ENABLED=${LOCK_GPIO_ENABLED:-0}
+      - LOCK_GPIO_CHIP=${LOCK_GPIO_CHIP:-/dev/gpiochip0}
+      - LOCK_GPIO_LINE=${LOCK_GPIO_LINE:-75}
+      - LOCK_ACTIVE_LOW=${LOCK_ACTIVE_LOW:-1}
+      - LOCK_UNLOCK_MS=${LOCK_UNLOCK_MS:-2000}
     devices:
-      - /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_4DEFC680-video-index0:/dev/video1
+      - ${CAMERA_DEVICE_PATH:-/dev/video0}:${CAMERA_DEVICE_PATH:-/dev/video0}
+      - ${LOCK_GPIO_CHIP:-/dev/gpiochip0}:${LOCK_GPIO_CHIP:-/dev/gpiochip0}
+
+  palmgate-frontend-usb:
+    <<: *frontend-common
+    container_name: palmgate-frontend-usb
+    profiles: ["usb"]
+
+  palmgate-proxy-usb:
+    <<: *proxy-common
+    container_name: palmgate-proxy-usb
+    profiles: ["usb"]
+    depends_on:
+      - palmgate-api-usb
+      - palmgate-frontend-usb
+    environment:
+      - PALMGATE_API_UPSTREAM=http://palmgate-api-usb:8000
+      - PALMGATE_FRONTEND_UPSTREAM=http://palmgate-frontend-usb:3000
 
   cloudflared-browser:
     <<: *cloudflared-common
+    container_name: palmgate-cloudflared-browser
     profiles: ["browser"]
     depends_on:
-      - palmgate-browser
+      - palmgate-proxy-browser
 
   cloudflared-usb:
     <<: *cloudflared-common
+    container_name: palmgate-cloudflared-usb
     profiles: ["usb"]
     depends_on:
-      - palmgate-usb
+      - palmgate-proxy-usb
 
 volumes:
   palmgate-db:

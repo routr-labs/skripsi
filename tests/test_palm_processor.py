@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import app.palm_processor as palm_processor_module
 from app.palm_processor import PalmProcessor
 
 
@@ -62,18 +63,8 @@ def test_get_embedding_from_notebook_frame_returns_none_when_preprocessing_fails
     assert result is None
 
 
-def test_get_embedding_from_notebook_frame_runs_inference(processor, monkeypatch):
-    class FakeResult:
-        model_input = np.ones((224, 224, 3), dtype=np.float32)
-
-    class FakeNotebookPreprocessor:
-        rembg_enabled = True
-
-        def extract_full_hand_roi(self, frame):
-            return FakeResult()
-
-    processor.notebook_preprocessor = FakeNotebookPreprocessor()
-    monkeypatch.setattr(processor, "_run_inference", lambda processed: np.ones(4, dtype=np.float32))
+def test_get_embedding_from_notebook_frame_uses_mediapipe_path(processor, monkeypatch):
+    monkeypatch.setattr(processor, "get_embedding", lambda frame, tta_enabled=False: np.ones(4, dtype=np.float32))
 
     result = processor.get_embedding_from_notebook_frame(np.zeros((480, 640, 3), dtype=np.uint8))
 
@@ -163,3 +154,141 @@ def test_registration_guidance_metrics_detects_clipped_hand(processor):
     )
 
     assert metrics["hand_clipped"] is True
+
+
+def test_run_inference_reads_final_output_and_normalizes(processor):
+    class FakeInterpreter:
+        def __init__(self):
+            self.input = None
+
+        def set_tensor(self, index, value):
+            assert index == 1
+            self.input = value
+
+        def invoke(self):
+            pass
+
+        def get_tensor(self, index):
+            assert index == 2
+            return np.array([[3.0, 4.0]], dtype=np.float32)
+
+    processor.interpreter = FakeInterpreter()
+    processor._input_index = 1
+    processor._output_index = 2
+    processor._embedding_dim = 2
+
+    result = processor._run_inference(np.zeros((224, 224, 3), dtype=np.float32))
+
+    np.testing.assert_allclose(result, np.array([0.6, 0.8], dtype=np.float32), rtol=1e-6)
+
+
+def test_get_embedding_from_notebook_frame_is_mediapipe_wrapper(processor, monkeypatch):
+    called = {"value": False}
+
+    def fake_get_embedding(frame, tta_enabled=False):
+        called["value"] = True
+        assert tta_enabled is True
+        return np.ones(2, dtype=np.float32)
+
+    monkeypatch.setattr(processor, "get_embedding", fake_get_embedding)
+
+    result = processor.get_embedding_from_notebook_frame(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        tta_enabled=True,
+    )
+
+    assert called["value"] is True
+    np.testing.assert_array_equal(result, np.ones(2, dtype=np.float32))
+
+
+def test_get_embedding_from_roi_does_not_apply_second_rotation(processor, monkeypatch):
+    roi = np.full((80, 80, 3), 120, dtype=np.uint8)
+    seen = {}
+
+    def fake_preprocess(value):
+        seen["roi"] = value.copy()
+        return np.zeros((224, 224, 3), dtype=np.float32)
+
+    monkeypatch.setattr(processor, "preprocess_roi", fake_preprocess)
+    monkeypatch.setattr(processor, "_run_inference_with_optional_tta", lambda processed, tta_enabled=False: np.ones(2, dtype=np.float32))
+
+    result = processor.get_embedding_from_roi(roi, rotation_angle=30.0, tta_enabled=False)
+
+    np.testing.assert_array_equal(seen["roi"], roi)
+    np.testing.assert_array_equal(result, np.ones(2, dtype=np.float32))
+
+
+def test_extract_palm_roi_rejects_small_palm_width(processor):
+    class FakeLandmarker:
+        def close(self):
+            pass
+
+        def detect(self, image):
+            return SimpleNamespace(hand_landmarks=[fake_landmarks({
+                0: (0.50, 0.80),
+                5: (0.50, 0.45),
+                9: (0.50, 0.42),
+                17: (0.51, 0.45),
+            })])
+
+    processor._hand_landmarker = FakeLandmarker()
+
+    result = processor.extract_palm_roi(np.full((100, 100, 3), 120, dtype=np.uint8))
+
+    assert result is None
+
+
+def test_extract_palm_roi_normalizes_opposite_hand_rotation(processor, monkeypatch):
+    class FakeLandmarker:
+        def close(self):
+            pass
+
+        def detect(self, image):
+            return SimpleNamespace(hand_landmarks=[fake_landmarks({
+                0: (0.50, 0.80),
+                5: (0.65, 0.45),
+                9: (0.50, 0.42),
+                17: (0.35, 0.45),
+            })])
+
+    angles = []
+
+    def fake_rotation_matrix(center, angle, scale):
+        angles.append(angle)
+        return np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+
+    processor._hand_landmarker = FakeLandmarker()
+    monkeypatch.setattr(palm_processor_module.cv2, "getRotationMatrix2D", fake_rotation_matrix)
+
+    roi = processor.extract_palm_roi(np.full((100, 200, 3), 120, dtype=np.uint8))
+
+    assert roi is not None
+    assert angles == [0.0]
+
+
+def test_compute_similarity_skips_incompatible_embedding_dimensions(processor):
+    result = processor.compute_similarity(
+        np.ones(128, dtype=np.float32),
+        [{"id": 1, "name": "Old", "embedding": np.ones(1280, dtype=np.float32)}],
+        threshold=0.7,
+    )
+
+    assert result["status"] == "DENIED"
+    assert result["closest_match"] is None
+    assert result["similarity"] == 0.0
+
+
+def test_compute_similarity_matches_compatible_template(processor):
+    result = processor.compute_similarity(
+        np.array([1.0, 0.0], dtype=np.float32),
+        [
+            {"id": 1, "name": "Alice", "embedding": np.array([1.0, 0.0], dtype=np.float32), "hand": "left"},
+            {"id": 2, "name": "Bob", "embedding": np.array([0.0, 1.0], dtype=np.float32), "hand": "right"},
+        ],
+        threshold=0.7,
+    )
+
+    assert result["status"] == "ALLOWED"
+    assert result["name"] == "Alice"
+    assert result["user_id"] == 1
+    assert result["similarity"] == 1.0

@@ -1,24 +1,33 @@
-import numpy as np
+import binascii
+import os
+import uuid
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import (
+    DEV_FEATURES_ENABLED,
     DUPLICATE_THRESHOLD,
+    ENROLLMENT_TTA_ENABLED,
     REGISTRATION_CAPTURES_PER_HAND,
     REGISTRATION_HANDS,
-    REGISTRATION_TOTAL_CAPTURES,
+    REGISTRATION_MIN_VALID_PER_HAND,
 )
 from app.routes.recognize import decode_base64_image
+from app.services.embedding_templates import build_hand_templates, overall_template
 
 router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
+    nim: str = ""
     name: str
     images: list
     hands: list[str] = []
+    source: str = "camera"
     is_roi: bool = False          # True when the browser pre-cropped all palm ROIs
-    rotation_angle: float = 0.0   # Knuckle-line tilt (deg) from index-MCP→pinky-MCP vector
+    rotation_angle: float = 0.0   # Kept for backward compatibility; new ROIs are already aligned
 
 
 class RegisterResponse(BaseModel):
@@ -31,44 +40,84 @@ class RegisterResponse(BaseModel):
 async def register(req: RegisterRequest):
     from app.main import palm_processor, db
 
+    nim = req.nim.strip()
+    if not nim:
+        raise HTTPException(status_code=400, detail="NIM is required")
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
 
-    required_detail = (
-        f"Need exactly {REGISTRATION_CAPTURES_PER_HAND} left-hand and "
-        f"{REGISTRATION_CAPTURES_PER_HAND} right-hand palm images"
-    )
+    source = req.source.strip().lower()
+    if source not in {"camera", "upload"}:
+        raise HTTPException(status_code=400, detail="Invalid registration source")
+    if source == "upload" and not DEV_FEATURES_ENABLED:
+        raise HTTPException(status_code=403, detail="Upload registration is only available in development mode")
+
+    required_detail = f"Need exactly {REGISTRATION_CAPTURES_PER_HAND} images for each selected hand"
     hands = [hand.lower() for hand in req.hands]
-    if len(req.images) != REGISTRATION_TOTAL_CAPTURES or len(hands) != len(req.images):
+    if not hands:
+        raise HTTPException(status_code=400, detail="Select at least one hand to register")
+    if len(hands) != len(req.images):
         raise HTTPException(status_code=400, detail=required_detail)
     if any(hand not in REGISTRATION_HANDS for hand in hands):
         raise HTTPException(status_code=400, detail=required_detail)
-    if any(hands.count(hand) != REGISTRATION_CAPTURES_PER_HAND for hand in REGISTRATION_HANDS):
+    selected_hands = tuple(hand for hand in REGISTRATION_HANDS if hand in hands)
+    if any(hands.count(hand) != REGISTRATION_CAPTURES_PER_HAND for hand in selected_hands):
         raise HTTPException(status_code=400, detail=required_detail)
 
-    embeddings = []
+    session_id = str(uuid.uuid4())
+    # Save to the persistent /data volume if it exists (Docker), otherwise local data/
+    base_data_dir = "/data" if os.path.exists("/data") else "data"
+    save_dir = os.path.join(base_data_dir, "captures", f"{nim}_{session_id}")
+    os.makedirs(save_dir, exist_ok=True)
+    import cv2
+
+    samples = []
     for i, img_b64 in enumerate(req.images):
         try:
             frame = decode_base64_image(img_b64)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid image at index {i}")
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid image at index {i}") from exc
+
+        cv2.imwrite(os.path.join(save_dir, f"{hands[i]}_{i}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
         if req.is_roi:
-            emb = palm_processor.get_embedding_from_roi(frame, req.rotation_angle)
+            emb = palm_processor.get_embedding_from_roi(
+                frame,
+                req.rotation_angle,
+                tta_enabled=ENROLLMENT_TTA_ENABLED,
+            )
         else:
-            emb = palm_processor.get_embedding(frame)
+            emb = palm_processor.get_embedding(frame, tta_enabled=ENROLLMENT_TTA_ENABLED)
 
         if emb is None:
             raise HTTPException(
                 status_code=422,
                 detail=f"No hand detected in image {i + 1}",
             )
-        embeddings.append(emb)
+        samples.append({"hand": hands[i], "embedding": emb})
 
-    avg_embedding = np.mean(embeddings, axis=0).astype(np.float32)
+    try:
+        templates = build_hand_templates(
+            samples,
+            required_hands=selected_hands,
+            min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    template_hands = list(templates.keys())
+    template_embeddings = [templates[hand] for hand in template_hands]
+    raw_embeddings = []
+    raw_embedding_hands = []
+    for hand in selected_hands:
+        for sample in samples:
+            if sample["hand"] == hand:
+                raw_embeddings.append(sample["embedding"])
+                raw_embedding_hands.append(hand)
+    avg_embedding = overall_template(templates)
 
     stored = db.get_all_embeddings()
-    for emb in embeddings:
+    for emb in template_embeddings:
         dupe = palm_processor.compute_similarity(emb, stored, DUPLICATE_THRESHOLD)
         if dupe["status"] == "ALLOWED":
             raise HTTPException(
@@ -78,10 +127,15 @@ async def register(req: RegisterRequest):
                        "Use a different palm or remove the existing user first.",
             )
 
-    user_id = db.add_user(
-        req.name.strip(),
-        avg_embedding,
-        individual_embeddings=embeddings,
-        embedding_hands=hands,
-    )
+    try:
+        user_id = db.add_user(
+            req.name.strip(),
+            avg_embedding,
+            nim=nim,
+            individual_embeddings=raw_embeddings,
+            embedding_hands=raw_embedding_hands,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     return RegisterResponse(success=True, user_id=user_id, name=req.name.strip())

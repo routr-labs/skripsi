@@ -1,7 +1,9 @@
+from app.config import REGISTRATION_CAPTURES_PER_HAND
 from app.services.registration_quality import SAMPLE_TARGETS, evaluate_guidance
 
 
 def test_has_five_registration_targets():
+    assert len(SAMPLE_TARGETS) == REGISTRATION_CAPTURES_PER_HAND
     assert [target.key for target in SAMPLE_TARGETS] == [
         "center",
         "closer",

@@ -3,6 +3,7 @@ import cv2
 
 class OpenCVCameraSource:
     def __init__(self, device_source: int | str = 0):
+        device_source = int(device_source) if isinstance(device_source, str) and device_source.isdigit() else device_source
         self.capture = cv2.VideoCapture(device_source)
         if not self.capture.isOpened():
             raise RuntimeError(f"Failed to open camera device {device_source}")

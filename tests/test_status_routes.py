@@ -56,3 +56,30 @@ def test_status_includes_registration_runtime_state(monkeypatch):
     assert device["worker_state"] == "registration_active"
     assert device["registration_active"] is True
     assert device["registration_captured_count"] == 3
+
+
+def test_status_includes_environment_and_dev_features(monkeypatch):
+    import app.routes.status as status_route
+
+    monkeypatch.setattr(status_route, "APP_ENV", "development")
+    monkeypatch.setattr(status_route, "DEV_FEATURES_ENABLED", True)
+
+    client = TestClient(app)
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    app_status = response.json()["app"]
+    assert app_status["environment"] == "development"
+    assert app_status["dev_features"] is True
+
+
+def test_status_reports_configured_app_version(monkeypatch):
+    import app.routes.status as status_route
+
+    monkeypatch.setattr(status_route, "PALMGATE_VERSION", "8f5f5d1")
+
+    client = TestClient(app)
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json()["app"]["version"] == "8f5f5d1"

@@ -3,6 +3,14 @@ import numpy as np
 from pathlib import Path
 
 
+class UserValidationError(ValueError):
+    pass
+
+
+class DuplicateNimError(ValueError):
+    pass
+
+
 class Database:
     def __init__(self, db_path: "str | Path"):
         self.db_path = str(db_path)
@@ -17,6 +25,7 @@ class Database:
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                nim         TEXT NOT NULL UNIQUE,
                 name        TEXT NOT NULL,
                 embedding   BLOB NOT NULL,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -55,9 +64,19 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        self._ensure_user_nim_column()
         self._ensure_user_embedding_metadata_columns()
         self._ensure_access_log_metadata_columns()
         self.conn.commit()
+
+    def _ensure_user_nim_column(self):
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(users)")}
+        if "nim" not in columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN nim TEXT")
+            self.conn.execute(
+                "UPDATE users SET nim = 'legacy-' || id WHERE nim IS NULL OR TRIM(nim) = ''"
+            )
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nim ON users(nim)")
 
     def _ensure_user_embedding_metadata_columns(self):
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(user_embeddings)")}
@@ -75,30 +94,87 @@ class Database:
         self,
         name: str,
         embedding: np.ndarray,
+        *,
+        nim: str,
         individual_embeddings: "list[np.ndarray] | None" = None,
         embedding_hands: "list[str] | None" = None,
     ) -> int:
-        cursor = self.conn.execute(
-            "INSERT INTO users (name, embedding) VALUES (?, ?)",
-            (name, embedding.tobytes()),
-        )
-        user_id = cursor.lastrowid
+        clean_nim = nim.strip()
+        clean_name = name.strip()
+        if not clean_nim:
+            raise UserValidationError("NIM is required")
+        if not clean_name:
+            raise UserValidationError("Name is required")
+
+        individual_rows = []
         if individual_embeddings:
-            hands = embedding_hands or ["unknown"] * len(individual_embeddings)
+            hands = ["unknown"] * len(individual_embeddings) if embedding_hands is None else embedding_hands
             if len(hands) != len(individual_embeddings):
                 raise ValueError("embedding_hands must match individual_embeddings length")
-            self.conn.executemany(
-                "INSERT INTO user_embeddings (user_id, embedding, hand) VALUES (?, ?, ?)",
-                [(user_id, e.tobytes(), hand) for e, hand in zip(individual_embeddings, hands)],
+            individual_rows = [(e.astype(np.float32).tobytes(), hand) for e, hand in zip(individual_embeddings, hands)]
+
+        try:
+            cursor = self.conn.execute(
+                "INSERT INTO users (nim, name, embedding) VALUES (?, ?, ?)",
+                (clean_nim, clean_name, embedding.astype(np.float32).tobytes()),
             )
-        self.conn.commit()
-        return user_id
+            user_id = cursor.lastrowid
+            if individual_rows:
+                self.conn.executemany(
+                    "INSERT INTO user_embeddings (user_id, embedding, hand) VALUES (?, ?, ?)",
+                    [(user_id, blob, hand) for blob, hand in individual_rows],
+                )
+            self.conn.commit()
+            return user_id
+        except sqlite3.IntegrityError as exc:
+            self.conn.rollback()
+            if "users.nim" in str(exc) or "idx_users_nim" in str(exc) or "UNIQUE" in str(exc):
+                raise DuplicateNimError("NIM already exists") from exc
+            raise
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_all_users(self) -> list:
         rows = self.conn.execute(
-            "SELECT id, name, created_at FROM users ORDER BY id"
+            "SELECT id, nim, name, created_at FROM users ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_user(self, user_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, nim, name, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_user(self, user_id: int, *, nim: str | None = None, name: str | None = None) -> dict | None:
+        clean_nim = nim.strip() if nim is not None else None
+        clean_name = name.strip() if name is not None else None
+        if nim is not None and not clean_nim:
+            raise UserValidationError("NIM is required")
+        if name is not None and not clean_name:
+            raise UserValidationError("Name is required")
+
+        try:
+            cursor = self.conn.execute(
+                "UPDATE users SET nim = COALESCE(?, nim), name = COALESCE(?, name) WHERE id = ?",
+                (clean_nim, clean_name, user_id),
+            )
+            if cursor.rowcount == 0:
+                self.conn.rollback()
+                return None
+            self.conn.commit()
+        except sqlite3.IntegrityError as exc:
+            self.conn.rollback()
+            if "users.nim" in str(exc) or "idx_users_nim" in str(exc) or "UNIQUE" in str(exc):
+                raise DuplicateNimError("NIM already exists") from exc
+            raise
+        except Exception:
+            self.conn.rollback()
+            raise
+
+        return self.get_user(user_id)
 
     def get_all_embeddings(self) -> list:
         """Return one entry per stored embedding.
@@ -174,17 +250,87 @@ class Database:
         )
         self.conn.commit()
 
-    def get_access_logs(self, limit: int = 20, offset: int = 0) -> list:
+    def _access_log_filter_sql(
+        self,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[str, list]:
+        clauses = []
+        params = []
+        if q and q.strip():
+            pattern = f"%{q.strip().lower()}%"
+            clauses.append(
+                "(LOWER(access_logs.matched_name) LIKE ? "
+                "OR LOWER(COALESCE(access_logs.description, '')) LIKE ? "
+                "OR LOWER(COALESCE(users.nim, '')) LIKE ?)"
+            )
+            params.extend([pattern, pattern, pattern])
+        if status:
+            clauses.append("access_logs.status = ?")
+            params.append(status)
+        if start_date:
+            clauses.append("DATE(access_logs.timestamp) >= DATE(?)")
+            params.append(start_date)
+        if end_date:
+            clauses.append("DATE(access_logs.timestamp) <= DATE(?)")
+            params.append(end_date)
+        if not clauses:
+            return "", params
+        return "WHERE " + " AND ".join(clauses), params
+
+    def get_access_logs(
+        self,
+        limit: int | None = 20,
+        offset: int = 0,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list:
+        where_sql, params = self._access_log_filter_sql(
+            q=q,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        limit_sql = "" if limit is None else " LIMIT ? OFFSET ?"
+        if limit is not None:
+            params.extend([limit, offset])
         rows = self.conn.execute(
-            "SELECT id, user_id, matched_name, status, similarity, duration_ms, description, timestamp "
-            "FROM access_logs ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT access_logs.id, access_logs.user_id, users.nim AS current_nim, "
+            "access_logs.matched_name, access_logs.status, access_logs.similarity, "
+            "access_logs.duration_ms, access_logs.description, access_logs.timestamp "
+            "FROM access_logs "
+            "LEFT JOIN users ON users.id = access_logs.user_id "
+            f"{where_sql} "
+            f"ORDER BY access_logs.timestamp DESC, access_logs.id DESC{limit_sql}",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def count_access_logs(self) -> int:
+    def count_access_logs(
+        self,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> int:
+        where_sql, params = self._access_log_filter_sql(
+            q=q,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return self.conn.execute(
-            "SELECT COUNT(*) FROM access_logs"
+            "SELECT COUNT(*) FROM access_logs "
+            "LEFT JOIN users ON users.id = access_logs.user_id "
+            f"{where_sql}",
+            params,
         ).fetchone()[0]
 
     def upsert_device_status(

@@ -29,23 +29,28 @@ htmlcov/
 .cursor/
 
 # Jupyter
-*.ipynb
 .ipynb_checkpoints/
 
 # Database (runtime data, not source)
 palmprint.db
+*.db.bak
 *.sqlite
 *.sqlite3
 
 # ML model files (large binaries — store separately, not in git)
-// *.tflite
 *.tflite.bak
-// *.task
+*.task
 *.h5
 *.pb
 *.onnx
 *.pt
 *.pth
+
+# Vendored browser runtime assets
+!app/static/vendor/
+!app/static/vendor/**/
+!app/static/vendor/mediapipe/hand_landmarker.task
+frontend/public/static/vendor/
 
 # Docker
 *.log
@@ -60,8 +65,12 @@ desktop.ini
 .env.*
 !.env.example
 
+# Unnecessary / local things
+.superpowers/
+data/
+*/data/
 docs/
-tests/
+designs/
 Dataset*/
-scripts/
 seeds/
+test_script.py

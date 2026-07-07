@@ -1,21 +1,23 @@
+import asyncio
 import json
-import time
+import queue
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.config import REGISTRATION_CAPTURES_PER_HAND, REGISTRATION_HANDS, REGISTRATION_TOTAL_CAPTURES
-
 router = APIRouter(prefix="/api/device-registration")
 
 
 class StartRegistrationRequest(BaseModel):
+    nim: str = ""
     name: str
+    hands: list[str] = []
 
 
 class StartRegistrationResponse(BaseModel):
     session_id: str
+    nim: str
     name: str
     current_sample_index: int
     captured_count: int
@@ -34,59 +36,40 @@ def _runtime():
     return device_runtime
 
 
-def _hand_for_sample_index(index: int) -> str:
-    hand_index = index // REGISTRATION_CAPTURES_PER_HAND
-    return REGISTRATION_HANDS[min(hand_index, len(REGISTRATION_HANDS) - 1)]
-
-
-def _registration_progress(session) -> dict:
-    counts = {hand: 0 for hand in REGISTRATION_HANDS}
-    for i, sample in enumerate(session.captured_samples):
-        hand = sample.get("hand", _hand_for_sample_index(i))
-        if hand in counts:
-            counts[hand] += 1
-    return {
-        "required_per_hand": REGISTRATION_CAPTURES_PER_HAND,
-        "total_required": REGISTRATION_TOTAL_CAPTURES,
-        "current_hand": _hand_for_sample_index(session.current_sample_index),
-        "left_count": counts.get("left", 0),
-        "right_count": counts.get("right", 0),
-    }
-
-
 @router.post("/start", response_model=StartRegistrationResponse)
 async def start_registration(req: StartRegistrationRequest):
-    if not req.name.strip():
+    nim = req.nim.strip()
+    name = req.name.strip()
+    if not nim:
+        raise HTTPException(status_code=400, detail="NIM is required")
+    if not name:
         raise HTTPException(status_code=400, detail="Name is required")
+    runtime = _runtime()
     try:
-        session = _runtime().start_registration(req.name)
+        if req.hands:
+            runtime.start_registration(nim, name, hands=req.hands)
+        else:
+            runtime.start_registration(nim, name)
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    status = runtime.get_registration_status()
     return StartRegistrationResponse(
-        session_id=session.id,
-        name=session.name,
-        current_sample_index=session.current_sample_index,
-        captured_count=len(session.captured_samples),
-        **_registration_progress(session),
+        session_id=status["session_id"],
+        nim=status["nim"],
+        name=status["name"],
+        current_sample_index=status["current_sample_index"],
+        captured_count=status["captured_count"],
+        required_per_hand=status["required_per_hand"],
+        total_required=status["total_required"],
+        current_hand=status["current_hand"],
+        left_count=status["left_count"],
+        right_count=status["right_count"],
     )
 
 
 @router.get("/status")
 async def registration_status():
-    runtime = _runtime()
-    session = runtime.registration_session
-    if session is None:
-        return {"active": False, "worker_state": runtime.worker_state}
-    return {
-        "active": True,
-        "worker_state": runtime.worker_state,
-        "session_id": session.id,
-        "name": session.name,
-        "current_sample_index": session.current_sample_index,
-        "captured_count": len(session.captured_samples),
-        "guidance": session.last_guidance,
-        **_registration_progress(session),
-    }
+    return _runtime().get_registration_status()
 
 
 @router.get("/preview.jpg")
@@ -101,13 +84,13 @@ async def preview_frame():
     )
 
 
-def mjpeg_frames(runtime):
+async def mjpeg_frames(runtime):
     while True:
         frame = runtime.get_latest_frame_jpeg()
         if frame is not None:
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
         interval_seconds = getattr(runtime, "preview_frame_interval_ms", 100) / 1000
-        time.sleep(max(interval_seconds, 0.001))
+        await asyncio.sleep(max(interval_seconds, 0.001))
 
 
 @router.get("/preview.mjpg")
@@ -141,20 +124,23 @@ async def finalize_registration():
 
 @router.post("/cancel")
 async def cancel_registration():
-    _runtime().cancel_registration()
+    try:
+        _runtime().cancel_registration()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"success": True}
 
 
-def scan_event_stream(runtime):
+async def scan_event_stream(runtime):
     """SSE generator that yields scan events as they occur."""
     subscriber = runtime.scan_broadcaster.subscribe()
     try:
         while True:
             try:
-                event = subscriber.get(timeout=30)
+                event = await asyncio.to_thread(subscriber.get, True, 30)
                 data = json.dumps(event)
                 yield f"data: {data}\n\n"
-            except Exception:
+            except queue.Empty:
                 yield ": keepalive\n\n"
     finally:
         runtime.scan_broadcaster.unsubscribe(subscriber)

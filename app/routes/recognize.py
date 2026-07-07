@@ -1,22 +1,29 @@
+import asyncio
 import base64
 import logging
+import re
 import time
+from pathlib import Path
+
 import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.config import SIMILARITY_THRESHOLD
+from app.config import DEV_FEATURES_ENABLED, RECOGNITION_TTA_ENABLED, SIMILARITY_THRESHOLD
 from app.services.recognition_service import match_embedding_and_log
 
 log = logging.getLogger("palmgate")
 router = APIRouter()
+RECOGNITION_DEBUG_DIR = Path("data") / "debug" / "recognize"
 
 
 class RecognizeRequest(BaseModel):
     image: str
     is_roi: bool = False          # True when the browser has pre-cropped the palm ROI
     rotation_angle: float = 0.0   # Knuckle-line tilt (deg) from index-MCP→pinky-MCP vector
+    debug_roi: bool = False
+    source: str = "scan"
 
 
 class RecognizeResponse(BaseModel):
@@ -24,6 +31,8 @@ class RecognizeResponse(BaseModel):
     name: str
     similarity: float
     closest_match: "str | None" = None
+    roi_image: "str | None" = None
+    debug_image_paths: "dict[str, str] | None" = None
 
 
 def decode_base64_image(b64_string: str) -> np.ndarray:
@@ -37,7 +46,40 @@ def decode_base64_image(b64_string: str) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
-@router.post("/api/recognize", response_model=RecognizeResponse)
+def encode_roi_image(processed_roi: np.ndarray) -> str | None:
+    try:
+        roi_uint8 = np.clip(processed_roi, 0, 255).astype(np.uint8)
+        ok, data = cv2.imencode(".jpg", cv2.cvtColor(roi_uint8, cv2.COLOR_RGB2BGR))
+        if not ok:
+            log.warning("RECOGNIZE | ROI preview encoding failed: cv2.imencode returned false")
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(data.tobytes()).decode("ascii")
+    except Exception as exc:
+        log.warning("RECOGNIZE | ROI preview encoding failed: %s", exc)
+        return None
+
+
+def _safe_debug_source(source: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "-", source.strip().lower()).strip("-") or "scan"
+
+
+def _write_debug_images(frame: np.ndarray, processed_roi: np.ndarray | None, source: str) -> dict[str, str]:
+    RECOGNITION_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    prefix = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}_{_safe_debug_source(source)}"
+    paths = {"frame": str(RECOGNITION_DEBUG_DIR / f"{prefix}_frame.jpg")}
+    cv2.imwrite(paths["frame"], cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    if processed_roi is not None:
+        paths["roi"] = str(RECOGNITION_DEBUG_DIR / f"{prefix}_roi.jpg")
+        roi_uint8 = np.clip(processed_roi, 0, 255).astype(np.uint8)
+        cv2.imwrite(paths["roi"], cv2.cvtColor(roi_uint8, cv2.COLOR_RGB2BGR))
+    return paths
+
+
+async def save_debug_images(frame: np.ndarray, processed_roi: np.ndarray | None, source: str) -> dict[str, str]:
+    return await asyncio.to_thread(_write_debug_images, frame, processed_roi, source)
+
+
+@router.post("/api/recognize", response_model=RecognizeResponse, response_model_exclude_unset=True)
 async def recognize(req: RecognizeRequest):
     from app.main import palm_processor, db
 
@@ -50,12 +92,23 @@ async def recognize(req: RecognizeRequest):
         log.error("RECOGNIZE | image decode failed: %s", e)
         raise HTTPException(status_code=400, detail="Invalid image data")
 
+    processed_roi = None
+    should_return_roi = DEV_FEATURES_ENABLED and req.debug_roi
+
     if req.is_roi:
-        log.debug("RECOGNIZE | using pre-cropped client ROI — skipping server detection  angle=%.1f°",
-                  req.rotation_angle)
-        embedding = palm_processor.get_embedding_from_roi(frame, req.rotation_angle)
+        log.debug("RECOGNIZE | using pre-cropped client ROI — skipping server detection")
+        embedding, processed_roi = palm_processor.get_embedding_from_roi_with_processed_roi(
+            frame,
+            req.rotation_angle,
+            tta_enabled=RECOGNITION_TTA_ENABLED,
+        )
     else:
-        embedding = palm_processor.get_embedding_from_notebook_frame(frame)
+        embedding, processed_roi = palm_processor.get_embedding_with_processed_roi(
+            frame,
+            tta_enabled=RECOGNITION_TTA_ENABLED,
+        )
+    if not should_return_roi:
+        processed_roi = None
 
     if embedding is None:
         log.warning("RECOGNIZE | returning 422 — no hand detected in frame")
@@ -63,4 +116,11 @@ async def recognize(req: RecognizeRequest):
 
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     result = match_embedding_and_log(palm_processor, db, embedding, SIMILARITY_THRESHOLD, duration_ms=duration_ms)
-    return RecognizeResponse(**result)
+    payload = dict(result)
+    if should_return_roi:
+        payload["debug_image_paths"] = await save_debug_images(frame, processed_roi, req.source)
+    if should_return_roi and processed_roi is not None:
+        roi_image = encode_roi_image(processed_roi)
+        if roi_image:
+            payload["roi_image"] = roi_image
+    return RecognizeResponse(**payload)

@@ -1,0 +1,35 @@
+{
+  "name": "palmgate-admin-frontend",
+  "private": true,
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "sync:static-vendor": "node scripts/sync-static-vendor.mjs",
+    "dev": "bun run sync:static-vendor && vite --host 127.0.0.1 --port 3000",
+    "build": "bun run sync:static-vendor && vite build",
+    "start": "vite preview --host 127.0.0.1 --port 3000",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.17",
+    "@tanstack/react-router-devtools": "^1.167.0",
+    "@tanstack/react-start": "^1.168.27",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^22.5.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^29.1.1",
+    "nitro": "3.0.260311-beta",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.9"
+  }
+}

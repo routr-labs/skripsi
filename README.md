@@ -7,8 +7,10 @@ Web-based palmprint recognition app that now supports two operating modes:
 ## Requirements
 
 - Python 3.10+
-- `palm_recognition.tflite` in the project root
+- `models/embedding_new_roi_v2/model.tflite` by default, or set `MODEL_VERSION=<version>` for `models/<version>/model.tflite`
+- `model_metadata.json` next to the selected model if available
 - `hand_landmarker.task` in the project root
+- Browser MediaPipe assets in `app/static/vendor/mediapipe/` for offline browser hand detection
 
 ## Setup
 
@@ -26,6 +28,34 @@ urllib.request.urlretrieve(
 )
 ```
 
+Browser hand detection does not load MediaPipe or fonts from a CDN at runtime. The browser assets are vendored under `app/static/vendor/mediapipe/` and copied into the React build by `frontend/scripts/sync-static-vendor.mjs`.
+
+To refresh those browser assets while online:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+from urllib.request import urlretrieve
+
+root = Path('app/static/vendor/mediapipe')
+files = {
+    'vision_bundle.mjs': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs',
+    'wasm/vision_wasm_internal.js': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_internal.js',
+    'wasm/vision_wasm_internal.wasm': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_internal.wasm',
+    'wasm/vision_wasm_nosimd_internal.js': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_nosimd_internal.js',
+    'wasm/vision_wasm_nosimd_internal.wasm': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_nosimd_internal.wasm',
+    'hand_landmarker.task': 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+}
+
+for relative_path, url in files.items():
+    target = root / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    urlretrieve(url, target)
+    print(target)
+PY
+cd frontend && bun run sync:static-vendor
+```
+
 ## Run locally
 
 ```bash
@@ -34,10 +64,30 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 Open: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
+## Run with Docker
+
+Docker Compose reads `.env`, not `.env.example`. The example defaults to the USB profile and pulls the prebuilt GHCR image:
+
+```bash
+cp .env.example .env
+docker compose pull
+docker compose up -d
+```
+
+To update the Orange Pi after pushing new code:
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+The running build SHA is shown in the dashboard status card and in `/api/status` as `app.version`.
+
 ## Current features
 
 - **Scan Palm** — browser-camera recognition with ALLOWED / DENIED result
-- **Register** — USB-camera registration that captures 7 guided samples and stores the best 5
+- **Register** — camera or upload registration that captures 5 left-hand and 5 right-hand samples and stores per-hand templates
 - **Access Log** — timestamped history of recognition attempts
 - **Device Status** — shows worker state, camera state, FPS, registration state, and last recognition
 - **USB Runtime** — optional always-on worker for Orange Pi with a USB camera
@@ -94,16 +144,14 @@ Example response:
 
 ## Official USB registration workflow
 
-Production registration uses the Orange Pi USB camera, not the browser camera. The app captures 7 guided samples and stores the best 5 embeddings.
+Production registration uses the Orange Pi USB camera, not the browser camera. The app captures 5 left-hand and 5 right-hand samples and stores one template per hand.
 
-Sample sequence:
+Sample sequence for each hand:
 1. Center palm
 2. Move closer
 3. Move farther
 4. Rotate left
 5. Rotate right
-6. Shift left
-7. Shift right
 
 Browser registration is kept only for local testing and may be less reliable on the USB device.
 
@@ -115,13 +163,21 @@ You can bootstrap temporary users from named full-hand images in `seeds/`:
 python scripts/seed_users.py seeds
 ```
 
-Each image filename becomes the user name. The script uses the notebook-style preprocessing path, creates 7 mild palm ROI variants, averages the best 5 embeddings, and stores one averaged embedding per user. Existing users are skipped by default and access logs are preserved. To replace registered users while keeping logs:
+Each image or folder label must use `nim_name` format, for example `12345_Naufal.jpg`. For the local `Dataset_Webcam/` test-only folders that do not include NIMs, use:
+
+```bash
+python scripts/seed_users.py Dataset_Webcam --replace-users --auto-demo-nim
+```
+
+This generates stable demo NIMs such as `SEED-001`; do not use that flag for production enrollment.
+
+The script uses the same MediaPipe embedding path as runtime and stores a template for test seeding. Existing users are skipped by default and access logs are preserved. To replace registered users while keeping logs:
 
 ```bash
 python scripts/seed_users.py seeds --replace-users
 ```
 
-Seeded users are for initial testing only. Re-register users with the USB 7-sample flow before using the system for a real door lock.
+Seeded users are for initial testing only. Re-register users with the USB two-hand flow before using the system for a real door lock.
 
 ## Orange Pi workflow
 
@@ -143,7 +199,7 @@ This is the easiest way to test before attaching a USB camera.
 When the USB camera is connected to the Orange Pi, run the device worker:
 
 ```bash
-DEVICE_RUNTIME_ENABLED=1 CAMERA_SOURCE=usb CAMERA_DEVICE_INDEX=0 python -m app.device_runtime
+DEVICE_RUNTIME_ENABLED=1 CAMERA_SOURCE=usb CAMERA_DEVICE_PATH=/dev/video0 python -m app.device_runtime
 ```
 
 The worker will:
@@ -162,6 +218,7 @@ Service files are included in:
 Expected install layout:
 - project root: `/opt/palmgate`
 - virtualenv python: `/opt/palmgate/.venv/bin/python`
+- service account: `palmgate` user/group, with `video` group access for the USB worker
 
 ### API service
 Runs the FastAPI dashboard and browser-testing endpoints.
@@ -200,16 +257,15 @@ journalctl -u palmgate-device -f
 
 ## How recognition works
 
-1. Full-hand frames use notebook-style preprocessing: background removal, mask thresholding, contour extraction, FFT valley detection, palm ROI crop, CLAHE, and resize to `224×224`
-2. `palm_recognition.tflite` generates an embedding
-3. Cosine similarity compares the query embedding against stored per-capture embeddings
-4. Result is recorded as `ALLOWED` or `DENIED`
-
-MediaPipe is used for live registration guidance only; official USB registration and recognition embeddings use the notebook-style preprocessing path.
+1. Frames use MediaPipe hand landmarks to crop the palm ROI.
+2. The ROI is converted to grayscale, enhanced with CLAHE, converted back to RGB, resized to `224×224`, and kept as `0–255` float32 input.
+3. The selected `model.tflite` outputs a 128-d L2-normalized embedding directly.
+4. Cosine similarity compares the query embedding against stored per-hand templates.
+5. Result is recorded as `ALLOWED` or `DENIED`.
 
 ## Cross-device / cross-brightness reliability
 
-USB registration captures 7 guided samples and stores the best 5 individual capture embeddings. At recognition time the query is compared against every stored capture and the highest single match wins. Combined with brightness normalization, this improves accuracy when enrollment and recognition cameras differ.
+USB registration captures 5 samples per hand, averages each hand into a normalized template, and compares recognition queries against those templates. Combined with brightness normalization, this improves accuracy when enrollment and recognition cameras differ.
 
 ## Database migration notice
 

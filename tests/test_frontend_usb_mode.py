@@ -1,82 +1,92 @@
 from pathlib import Path
 
 
+ROOT = Path(__file__).resolve().parents[1]
+FRONTEND = ROOT / "frontend" / "app"
+
+
+def read_component(name):
+    return (FRONTEND / "components" / name).read_text()
+
+
 def test_frontend_checks_status_before_starting_browser_camera():
-    source = Path("app/static/app.js").read_text()
-    init_block = source[source.index("Init") :]
+    source = read_component("ScanPanel.tsx")
 
-    assert "await loadStatus()" in init_block
-    assert "if (!state.usbDeviceMode)" in init_block
-    assert init_block.index("await loadStatus()") < init_block.index("startCamera()")
-
-
-def test_frontend_tracks_usb_device_mode_from_status():
-    source = Path("app/static/app.js").read_text()
-
-    assert "usbDeviceMode" in source
+    assert "/api/status" in source
     assert "data.app?.camera_source === 'usb'" in source
+    assert "navigator.mediaDevices.getUserMedia" in source
 
 
 def test_frontend_streams_usb_preview_without_browser_camera():
-    source = Path("app/static/app.js").read_text()
-    init_block = source[source.index("Init") :]
+    source = read_component("ScanPanel.tsx")
 
-    assert "startUsbPreview()" in init_block
-    assert "document.createElement('img')" in source
     assert "const USB_PREVIEW_STREAM_URL = '/api/device-registration/preview.mjpg'" in source
-    assert "/api/device-registration/preview.jpg?t=" not in source
+    assert "usbPreviewRef" in source
     assert "URL.createObjectURL" not in source
-    assert "setInterval(updatePreview" not in source
-    assert init_block.index("startUsbPreview()") < init_block.index("setAutoMode(false)")
 
 
-def test_usb_registration_panel_has_camera_preview():
-    html = Path("app/static/index.html").read_text()
-    source = Path("app/static/app.js").read_text()
+def test_usb_scan_button_captures_visible_usb_preview_not_hidden_video():
+    source = read_component("ScanPanel.tsx")
 
-    assert "regCameraFrame" in html
-    assert "usbRegistrationPreview" in html
-    assert "usbRegistrationPreview" in source
-    assert "syncUsbPreviewTarget()" in source
-    assert "setUsbPreviewStream(usbRegistrationPreview" in source
+    assert "naturalWidth" in source
+    assert "const scanSource = usbDeviceMode ? usbPreviewRef.current : videoRef.current" in source
+    assert "await submitRecognitionImage(captureFrame(scanSource), usbDeviceMode ? 'usb-preview' : 'camera')" in source
 
 
-def test_frontend_keeps_only_active_usb_preview_stream_connected():
-    source = Path("app/static/app.js").read_text()
-    switch_tab_block = source[source.index("function switchTab") : source.index("btnMode.addEventListener")]
+def test_registration_ui_requires_and_sends_nim():
+    source = read_component("RegisterPanel.tsx")
 
-    assert "syncUsbPreviewTarget()" in source
-    assert "state.currentTab === 'scan'" in source
-    assert "state.currentTab === 'register'" in source
-    assert "img.removeAttribute('src')" in source
-    assert "syncUsbPreviewTarget();" in switch_tab_block
+    assert "NIM and full name are required" in source
+    assert "body: JSON.stringify({ nim, name" in source
 
 
-def test_usb_quality_ui_distinguishes_required_and_guidance_items():
-    source = Path("app/static/app.js").read_text()
+def test_registration_ui_has_optional_hand_chips():
+    source = read_component("RegisterPanel.tsx")
 
-    assert "const blockers = new Set(guidance.blockers || [])" in source
-    assert "Required" in source
-    assert "Guide" in source
-    assert "Adjust" in source
+    assert "selectedHands" in source
+    assert "function toggleHand(hand: Hand)" in source
+    assert "left" in source
+    assert "right" in source
 
 
-def test_registration_ui_uses_two_hand_flow_copy():
-    html = Path("app/static/index.html").read_text()
-    source = Path("app/static/app.js").read_text()
+def test_browser_registration_sends_hand_labels_and_full_frames():
+    source = read_component("RegisterPanel.tsx")
 
-    assert "Follow 7 guided poses" not in html
-    assert "Sample 1/7" not in html
-    assert "0 / 7" not in html
-    assert "5 left-hand and 5 right-hand" in html
     assert "REGISTRATION_CAPTURES_PER_HAND = 5" in source
-    assert "currentSampleIndex % SAMPLE_TARGETS.length" in source
+    assert "hands: samples.map((sample) => sample.hand)" in source
+    assert "images: samples.map((sample) => sample.image)" in source
+    assert "is_roi: false" in source
 
 
-def test_browser_registration_sends_hand_labels():
-    source = Path("app/static/app.js").read_text()
+def test_usb_registration_uses_existing_device_endpoints():
+    source = read_component("RegisterPanel.tsx")
 
-    assert "hands: state.capturedSamples.map((c) => c.hand)" in source
-    assert "leftCount === REGISTRATION_CAPTURES_PER_HAND" in source
-    assert "rightCount === REGISTRATION_CAPTURES_PER_HAND" in source
-    assert "getCurrentRegistrationHand()" in source
+    assert "/api/device-registration/start" in source
+    assert "/api/device-registration/status" in source
+    assert "/api/device-registration/capture" in source
+    assert "/api/device-registration/finalize" in source
+    assert "/api/device-registration/cancel" in source
+    assert "hands: selectedHands" in source
+
+
+def test_upload_registration_is_dev_only_and_sends_upload_source():
+    source = read_component("RegisterPanel.tsx")
+
+    assert "hidden={!devFeatures}" in source
+    assert "source: 'upload'" in source
+    assert "is_roi: false" in source
+
+
+def test_scan_panel_has_dev_upload_and_roi_preview_ui():
+    source = read_component("ScanPanel.tsx")
+
+    assert "id=\"scanUploadFile\"" in source
+    assert "debug_roi: devFeatures" in source
+    assert "roiPreviewImage" in source
+
+
+def test_frontend_displays_nim_with_user_name():
+    source = read_component("UserList.tsx")
+
+    assert "{user.nim}" in source
+    assert "{user.name}" in source

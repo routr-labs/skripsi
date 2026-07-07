@@ -4,17 +4,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.config import SIMILARITY_THRESHOLD, USB_REGISTRATION_STORE_EMBEDDINGS
-from app.services.registration_ranking import RegistrationSample, rank_registration_samples
+from app.config import DUPLICATE_THRESHOLD, ENROLLMENT_TTA_ENABLED, REGISTRATION_MIN_VALID_PER_HAND
+from app.services.embedding_templates import build_hand_templates, l2_normalize, overall_template
 
 SEED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-MAX_ROTATION_DEGREES = 15.0  # Only accept images with rotation within ±15°
-
-
-@dataclass(frozen=True)
-class SeedVariant:
-    name: str
-    roi: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -32,160 +25,80 @@ class SeedUsersSummary:
     failed: dict[str, str]
 
 
-def _rotate(roi: np.ndarray, angle_degrees: float) -> np.ndarray:
-    h, w = roi.shape[:2]
-    matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle_degrees, 1.0)
-    return cv2.warpAffine(roi, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+def parse_seed_identity(label: str, demo_nim: str | None = None) -> tuple[str, str]:
+    nim, separator, name = label.partition("_")
+    if separator and nim.strip() and name.strip():
+        return nim.strip(), name.replace("_", " ").strip()
+    if demo_nim:
+        return demo_nim, label.replace("_", " ").strip()
+    raise RuntimeError("Seed labels must use nim_name format, for example 12345_Naufal")
 
 
-def _zoom(roi: np.ndarray, scale: float) -> np.ndarray:
-    h, w = roi.shape[:2]
-    resized = cv2.resize(roi, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    rh, rw = resized.shape[:2]
-
-    if scale >= 1.0:
-        y1 = max(0, (rh - h) // 2)
-        x1 = max(0, (rw - w) // 2)
-        return resized[y1:y1 + h, x1:x1 + w]
-
-    result = np.zeros_like(roi)
-    y1 = (h - rh) // 2
-    x1 = (w - rw) // 2
-    result[y1:y1 + rh, x1:x1 + rw] = resized
-    return result
+def _demo_nim(index: int) -> str:
+    return f"SEED-{index + 1:03d}"
 
 
-def _shift(roi: np.ndarray, x_ratio: float) -> np.ndarray:
-    h, w = roi.shape[:2]
-    matrix = np.float32([[1, 0, w * x_ratio], [0, 1, 0]])
-    return cv2.warpAffine(roi, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+def parse_system_register_folder(label: str) -> tuple[str, str]:
+    name, separator, suffix = label.rpartition("_")
+    if not separator or suffix.upper() not in {"L", "R"} or not name.strip():
+        raise RuntimeError("System register folders must end with _L or _R")
+    hand = "left" if suffix.upper() == "L" else "right"
+    return name.strip(), hand
 
 
-def create_seed_variants(roi: np.ndarray) -> list[SeedVariant]:
-    return [
-        SeedVariant("original", roi.copy()),
-        SeedVariant("rotate_left", _rotate(roi, -8.0)),
-        SeedVariant("rotate_right", _rotate(roi, 8.0)),
-        SeedVariant("zoom_in", _zoom(roi, 1.06)),
-        SeedVariant("zoom_out", _zoom(roi, 0.94)),
-        SeedVariant("shift_left", _shift(roi, -0.05)),
-        SeedVariant("shift_right", _shift(roi, 0.05)),
-    ]
-
-
-def _select_seed_embeddings(samples: list[RegistrationSample], source_name: str) -> SeedEmbeddingResult:
-    selected = rank_registration_samples(
-        samples,
-        keep=USB_REGISTRATION_STORE_EMBEDDINGS,
-        min_similarity=SIMILARITY_THRESHOLD,
-    )
-    if len(selected) < USB_REGISTRATION_STORE_EMBEDDINGS:
-        raise RuntimeError(f"Not enough consistent seed {source_name}")
-
-    embeddings = [sample.embedding.astype(np.float32) for sample in selected]
-    average = np.mean(embeddings, axis=0).astype(np.float32)
+def build_seed_embedding(frame_rgb: np.ndarray, palm_processor) -> SeedEmbeddingResult:
+    embedding = palm_processor.get_embedding(frame_rgb, tta_enabled=True)
+    if embedding is None:
+        raise RuntimeError("MediaPipe hand detection failed")
+    embedding = embedding.astype(np.float32)
     return SeedEmbeddingResult(
-        embedding=average,
-        individual_embeddings=embeddings,
-        variant_count=len(samples),
-        selected_count=len(selected),
-    )
-
-
-def build_seed_embedding(frame_rgb: np.ndarray, palm_processor, preprocessor) -> SeedEmbeddingResult:
-    # Use MediaPipe-based ROI extraction (palm_processor.extract_palm_roi) when
-    # rembg is disabled, since the threshold-based notebook preprocessing produces
-    # garbage without proper background removal.
-    if not preprocessor.rembg_enabled:
-        roi = palm_processor.extract_palm_roi(frame_rgb)
-        if roi is None:
-            raise RuntimeError("MediaPipe hand detection failed")
-        variants = create_seed_variants(roi)
-        samples = []
-        for index, variant in enumerate(variants):
-            processed = palm_processor.preprocess_roi(variant.roi)
-            embedding = palm_processor._run_inference(processed).astype(np.float32)
-            samples.append(RegistrationSample(index, 1.0, embedding))
-    else:
-        extracted = preprocessor.extract_full_hand_roi(frame_rgb)
-        if extracted is None:
-            raise RuntimeError("Notebook preprocessing failed")
-        variants = create_seed_variants(extracted.roi)
-        samples = []
-        for index, variant in enumerate(variants):
-            processed = preprocessor.preprocess_roi_to_model_input(variant.roi)
-            embedding = palm_processor._run_inference(processed).astype(np.float32)
-            samples.append(RegistrationSample(index, 1.0, embedding))
-
-    result = _select_seed_embeddings(samples, "augmentations")
-    return SeedEmbeddingResult(
-        embedding=result.embedding,
-        individual_embeddings=[result.embedding],
-        variant_count=result.variant_count,
-        selected_count=result.selected_count,
+        embedding=embedding,
+        individual_embeddings=[embedding],
+        variant_count=1,
+        selected_count=1,
     )
 
 
 def build_seed_embedding_from_frames(
     frames_rgb: list[np.ndarray],
     palm_processor,
-    preprocessor,
-    max_rotation: float = MAX_ROTATION_DEGREES,
 ) -> SeedEmbeddingResult:
-    """Build embedding from multiple frames, filtering by rotation consistency.
-
-    Only accepts frames where the detected palm rotation is within ±max_rotation degrees.
-    This ensures consistent ROI extraction across enrollment images.
-    """
-    # Use MediaPipe-based ROI extraction when rembg is disabled
-    if not preprocessor.rembg_enabled:
-        samples = []
-        for index, frame_rgb in enumerate(frames_rgb):
-            roi = palm_processor.extract_palm_roi(frame_rgb)
-            if roi is None:
-                continue
-            processed = palm_processor.preprocess_roi(roi)
-            embedding = palm_processor._run_inference(processed).astype(np.float32)
-            samples.append(RegistrationSample(index, 1.0, embedding))
-
-        if not samples:
-            raise RuntimeError("MediaPipe hand detection failed on all frames")
-
-        embeddings = [sample.embedding.astype(np.float32) for sample in samples]
-        average = np.mean(embeddings, axis=0).astype(np.float32)
-        return SeedEmbeddingResult(
-            embedding=average,
-            individual_embeddings=embeddings,
-            variant_count=len(frames_rgb),
-            selected_count=len(samples),
-        )
-
-    valid_extractions = []
-    for index, frame_rgb in enumerate(frames_rgb):
-        extracted = preprocessor.extract_full_hand_roi(frame_rgb)
-        if extracted is None:
-            continue
-        if abs(extracted.rotation_degrees) > max_rotation:
-            continue
-        valid_extractions.append((index, extracted))
-
-    if not valid_extractions:
-        raise RuntimeError(
-            f"No valid seed captures with rotation within ±{max_rotation}°. "
-            "Ensure enrollment images have palm roughly vertical."
-        )
-
-    samples = []
-    for index, extracted in valid_extractions:
-        processed = preprocessor.preprocess_roi_to_model_input(extracted.roi)
-        embedding = palm_processor._run_inference(processed).astype(np.float32)
-        samples.append(RegistrationSample(index, 1.0, embedding))
-
-    embeddings = [sample.embedding.astype(np.float32) for sample in samples]
-    average = np.mean(embeddings, axis=0).astype(np.float32)
+    embeddings = []
+    for frame_rgb in frames_rgb:
+        embedding = palm_processor.get_embedding(frame_rgb, tta_enabled=True)
+        if embedding is not None:
+            embeddings.append(embedding.astype(np.float32))
+    if not embeddings:
+        raise RuntimeError("MediaPipe hand detection failed on all frames")
+    average = l2_normalize(np.mean(embeddings, axis=0))
     return SeedEmbeddingResult(
         embedding=average,
-        individual_embeddings=embeddings,
+        individual_embeddings=[item.astype(np.float32) for item in embeddings],
+        variant_count=len(frames_rgb),
+        selected_count=len(embeddings),
+    )
+
+
+def build_system_register_template(
+    frames_rgb: list[np.ndarray],
+    palm_processor,
+    hand: str,
+) -> SeedEmbeddingResult:
+    samples = []
+    for frame_rgb in frames_rgb:
+        embedding = palm_processor.get_embedding(frame_rgb, tta_enabled=ENROLLMENT_TTA_ENABLED)
+        if embedding is not None:
+            samples.append({"hand": hand, "embedding": embedding.astype(np.float32)})
+
+    templates = build_hand_templates(
+        samples,
+        required_hands=(hand,),
+        min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
+    )
+    embedding = overall_template(templates)
+    return SeedEmbeddingResult(
+        embedding=embedding,
+        individual_embeddings=[sample["embedding"].astype(np.float32) for sample in samples],
         variant_count=len(frames_rgb),
         selected_count=len(samples),
     )
@@ -212,6 +125,28 @@ def _seed_person_dirs(seed_dir: Path) -> list[Path]:
     )
 
 
+def _system_register_person_dirs(seed_dir: Path) -> list[tuple[int, Path, str, str]]:
+    parsed = []
+    errors = []
+    for path in sorted(seed_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not path.is_dir():
+            continue
+        try:
+            name, hand = parse_system_register_folder(path.name)
+        except RuntimeError as exc:
+            errors.append((path, str(exc)))
+            continue
+        parsed.append((path, name, hand))
+
+    name_numbers = {
+        name: index + 1
+        for index, name in enumerate(sorted({name for _, name, _ in parsed}, key=str.lower))
+    }
+    rows = [(name_numbers[name], path, name, hand) for path, name, hand in parsed]
+    rows.extend((0, path, "", error) for path, error in errors)
+    return rows
+
+
 def _existing_user_names(db) -> set[str]:
     return {user["name"] for user in db.get_all_users()}
 
@@ -221,13 +156,71 @@ def _replace_users(db):
         db.delete_user(user["id"])
 
 
+def _reject_duplicate_templates(db, palm_processor, templates: list[np.ndarray]):
+    stored = db.get_all_embeddings()
+    for embedding in templates:
+        duplicate = palm_processor.compute_similarity(embedding, stored, DUPLICATE_THRESHOLD)
+        if duplicate["status"] == "ALLOWED":
+            raise RuntimeError(f"This palm is already registered as '{duplicate['name']}'")
+
+
+def seed_system_register_users_from_directory(
+    seed_dir: str | Path,
+    db,
+    palm_processor,
+    *,
+    replace_users: bool = False,
+    read_image=read_image_rgb,
+) -> SeedUsersSummary:
+    seed_dir = Path(seed_dir)
+    if not seed_dir.exists():
+        raise RuntimeError(f"Seed directory does not exist: {seed_dir}")
+
+    if replace_users:
+        _replace_users(db)
+
+    existing_nims = {user["nim"] for user in db.get_all_users()}
+    created = []
+    skipped = []
+    failed = {}
+
+    for number, person_dir, name, hand_or_error in _system_register_person_dirs(seed_dir):
+        try:
+            if number == 0:
+                raise RuntimeError(hand_or_error)
+            hand = hand_or_error
+            suffix = "L" if hand == "left" else "R"
+            nim = f"{number}-{suffix}"
+            label = f"{name} ({hand})"
+            if nim in existing_nims:
+                skipped.append(label)
+                continue
+
+            frames = [read_image(path) for path in _seed_image_paths(person_dir)]
+            result = build_system_register_template(frames, palm_processor, hand)
+            _reject_duplicate_templates(db, palm_processor, [result.embedding])
+            db.add_user(
+                name,
+                result.embedding,
+                nim=nim,
+                individual_embeddings=result.individual_embeddings,
+                embedding_hands=[hand] * len(result.individual_embeddings),
+            )
+            created.append(label)
+            existing_nims.add(nim)
+        except Exception as exc:
+            failed[person_dir.name] = str(exc)
+
+    return SeedUsersSummary(created=created, skipped=skipped, failed=failed)
+
+
 def seed_users_from_directory(
     seed_dir: str | Path,
     db,
     palm_processor,
-    preprocessor,
     *,
     replace_users: bool = False,
+    auto_demo_nim: bool = False,
     read_image=read_image_rgb,
 ) -> SeedUsersSummary:
     seed_dir = Path(seed_dir)
@@ -244,36 +237,52 @@ def seed_users_from_directory(
 
     person_dirs = _seed_person_dirs(seed_dir)
     if person_dirs:
-        for person_dir in person_dirs:
-            name = person_dir.name
-            if name in existing_names:
-                skipped.append(name)
-                continue
-
+        for index, person_dir in enumerate(person_dirs):
             try:
+                nim, name = parse_seed_identity(
+                    person_dir.name,
+                    demo_nim=_demo_nim(index) if auto_demo_nim else None,
+                )
+                if name in existing_names:
+                    skipped.append(name)
+                    continue
                 frames = [read_image(path) for path in _seed_image_paths(person_dir)]
-                result = build_seed_embedding_from_frames(frames, palm_processor, preprocessor)
-                db.add_user(name, result.embedding, individual_embeddings=result.individual_embeddings)
+                result = build_seed_embedding_from_frames(frames, palm_processor)
+                db.add_user(
+                    name,
+                    result.embedding,
+                    nim=nim,
+                    individual_embeddings=result.individual_embeddings,
+                    embedding_hands=["unknown"] * len(result.individual_embeddings),
+                )
                 created.append(name)
                 existing_names.add(name)
             except Exception as exc:
-                failed[name] = str(exc)
+                failed[person_dir.name] = str(exc)
 
         return SeedUsersSummary(created=created, skipped=skipped, failed=failed)
 
-    for path in _seed_image_paths(seed_dir):
-        name = path.stem
-        if name in existing_names:
-            skipped.append(name)
-            continue
-
+    for index, path in enumerate(_seed_image_paths(seed_dir)):
         try:
+            nim, name = parse_seed_identity(
+                path.stem,
+                demo_nim=_demo_nim(index) if auto_demo_nim else None,
+            )
+            if name in existing_names:
+                skipped.append(name)
+                continue
             frame = read_image(path)
-            result = build_seed_embedding(frame, palm_processor, preprocessor)
-            db.add_user(name, result.embedding, individual_embeddings=result.individual_embeddings)
+            result = build_seed_embedding(frame, palm_processor)
+            db.add_user(
+                name,
+                result.embedding,
+                nim=nim,
+                individual_embeddings=result.individual_embeddings,
+                embedding_hands=["unknown"] * len(result.individual_embeddings),
+            )
             created.append(name)
             existing_names.add(name)
         except Exception as exc:
-            failed[name] = str(exc)
+            failed[path.stem] = str(exc)
 
     return SeedUsersSummary(created=created, skipped=skipped, failed=failed)
