@@ -90,3 +90,17 @@ def test_patch_user_allows_partial_payload(monkeypatch):
 
     assert response.status_code == 200
     assert fake_db.updated == (7, None, "Alice Updated")
+
+
+def test_patch_user_rejects_explicit_null(monkeypatch):
+    import app.main as main
+
+    fake_db = FakeUsersDB()
+    monkeypatch.setattr(main, "db", fake_db)
+    client = TestClient(app)
+
+    response = client.patch("/api/users/7", json={"nim": None})
+
+    assert response.status_code == 400
+    assert "nim cannot be null" in response.json()["detail"]
+    assert fake_db.updated is None
