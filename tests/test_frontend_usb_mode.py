@@ -30,7 +30,7 @@ def test_usb_scan_button_captures_visible_usb_preview_not_hidden_video():
 
     assert "naturalWidth" in source
     assert "const scanSource = usbDeviceMode ? usbPreviewRef.current : videoRef.current" in source
-    assert "await submitRecognitionImage(captureFrame(scanSource))" in source
+    assert "await submitRecognitionImage(captureFrame(scanSource), usbDeviceMode ? 'usb-preview' : 'camera')" in source
 
 
 def test_registration_ui_requires_and_sends_nim():
@@ -72,7 +72,7 @@ def test_usb_registration_uses_existing_device_endpoints():
 def test_upload_registration_is_dev_only_and_sends_upload_source():
     source = read_component("RegisterPanel.tsx")
 
-    assert "devFeatures &&" in source
+    assert "hidden={!devFeatures}" in source
     assert "source: 'upload'" in source
     assert "is_roi: false" in source
 

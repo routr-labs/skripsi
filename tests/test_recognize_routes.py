@@ -101,7 +101,7 @@ def test_recognize_uses_recognition_tta_flag(monkeypatch):
     assert fake_processor.tta_enabled is True
 
 
-def test_recognize_returns_roi_image_in_dev_debug_mode(monkeypatch):
+def test_recognize_returns_roi_image_in_dev_debug_mode(monkeypatch, tmp_path):
     import app.main as main
     import app.routes.recognize as recognize_route
 
@@ -130,6 +130,7 @@ def test_recognize_returns_roi_image_in_dev_debug_mode(monkeypatch):
     monkeypatch.setattr(main, "palm_processor", fake_processor)
     monkeypatch.setattr(main, "db", FakeDB())
     monkeypatch.setattr(recognize_route, "DEV_FEATURES_ENABLED", True)
+    monkeypatch.setattr(recognize_route, "RECOGNITION_DEBUG_DIR", tmp_path)
     monkeypatch.setattr(recognize_route, "decode_base64_image", lambda image: np.zeros((20, 20, 3), dtype=np.uint8))
 
     client = TestClient(app)
@@ -140,6 +141,41 @@ def test_recognize_returns_roi_image_in_dev_debug_mode(monkeypatch):
     assert data["status"] == "ALLOWED"
     assert data["roi_image"].startswith("data:image/jpeg;base64,")
     assert fake_processor.used_debug_roi is True
+
+
+def test_recognize_saves_debug_frame_and_roi_in_dev_debug_mode(monkeypatch, tmp_path):
+    import app.main as main
+    import app.routes.recognize as recognize_route
+
+    class FakeProcessor:
+        def get_embedding_with_processed_roi(self, frame, tta_enabled=False):
+            return np.ones(4, dtype=np.float32), np.full((224, 224, 3), 128, dtype=np.uint8)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.1, "closest_match": None, "user_id": None}
+
+    class FakeDB:
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(main, "palm_processor", FakeProcessor())
+    monkeypatch.setattr(main, "db", FakeDB())
+    monkeypatch.setattr(recognize_route, "DEV_FEATURES_ENABLED", True)
+    monkeypatch.setattr(recognize_route, "RECOGNITION_DEBUG_DIR", tmp_path)
+    monkeypatch.setattr(recognize_route, "decode_base64_image", lambda image: np.zeros((20, 30, 3), dtype=np.uint8))
+
+    client = TestClient(app)
+    response = client.post("/api/recognize", json={"image": "img", "debug_roi": True, "source": "camera"})
+
+    assert response.status_code == 200
+    paths = response.json()["debug_image_paths"]
+    assert paths["frame"].endswith("_camera_frame.jpg")
+    assert paths["roi"].endswith("_camera_roi.jpg")
+    assert cv2.imread(paths["frame"]).shape[:2] == (20, 30)
+    assert cv2.imread(paths["roi"]).shape[:2] == (224, 224)
 
 
 def test_recognize_does_not_return_roi_image_in_production(monkeypatch):

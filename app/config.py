@@ -26,7 +26,8 @@ def _load_env_file(path: Path) -> None:
             os.environ[key] = value.strip().strip('"').strip("'")
 
 
-_load_env_file(BASE_DIR / ".env")
+if os.getenv("PALMGATE_SKIP_DOTENV", "0") != "1":
+    _load_env_file(BASE_DIR / ".env")
 
 DEFAULT_MODEL_VERSION = "embedding_new_roi_v2"
 DEFAULT_MODEL_DIR = BASE_DIR / "models" / "embedding"

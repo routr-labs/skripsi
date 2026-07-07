@@ -31,8 +31,8 @@
   --shadow:         0 1px 3px oklch(0% 0 0 / 0.08), 0 1px 2px oklch(0% 0 0 / 0.05);
   --shadow-md:      0 4px 8px oklch(0% 0 0 / 0.07), 0 2px 4px oklch(0% 0 0 / 0.05);
 
-  --font:      'Plus Jakarta Sans', system-ui, sans-serif;
-  --font-mono: 'DM Mono', 'Courier New', monospace;
+  --font:      system-ui, sans-serif;
+  --font-mono: 'Courier New', monospace;
 
   --radius:    10px;
   --radius-sm: 6px;
@@ -1086,49 +1086,135 @@ body {
   color: var(--text-2);
 }
 
-.users-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.users-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.users-table thead { background: var(--surface-alt); }
+
+.users-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.users-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+
+.users-table tr:last-child td { border-bottom: none; }
+
+.users-table tr:hover td { background: var(--surface-alt); }
+
+.users-empty-row td { padding: 0; border: none; }
 
 .users-empty {
+  padding: 2rem;
   font-size: 0.875rem;
   color: var(--text-3);
+  text-align: center;
 }
 
-.user-chip {
+.user-table-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 30px;
+  padding: 0 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 100px;
-  padding: 6px 12px 6px 10px;
-  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
   color: var(--text-2);
-  transition: border-color 0.15s;
-}
-
-.user-chip:hover { border-color: var(--border-strong); }
-
-.user-chip-name {
-  color: var(--text-1);
-  font-weight: 500;
-}
-
-.user-chip-delete {
-  background: none;
-  border: none;
-  color: var(--text-3);
+  font-family: var(--font);
+  font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
-  padding: 0;
-  line-height: 1;
-  font-size: 16px;
-  transition: color 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
-.user-chip-delete:hover { color: var(--error); }
+.user-action-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.user-action-btn.danger:hover {
+  color: var(--error);
+  border-color: var(--error-border);
+  background: var(--error-subtle);
+}
+
+.inline-form {
+  max-width: 1000px;
+  margin: 1rem auto 0;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.inline-form h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.inline-form p {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-actions .btn {
+  width: auto;
+  margin-top: 0;
+}
+
+.danger-zone {
+  border-color: var(--error-border);
+}
+
+.btn-danger {
+  background: var(--error);
+  color: oklch(100% 0 0);
+}
+
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.88;
+  box-shadow: 0 4px 12px oklch(50% 0.20 22 / 0.25);
+}
 
 /* ──────────────────────────────────────────
    REGISTER ACTIONS ROW

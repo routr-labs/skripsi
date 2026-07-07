@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import app.palm_processor as palm_processor_module
 from app.palm_processor import PalmProcessor
 
 
@@ -235,6 +236,34 @@ def test_extract_palm_roi_rejects_small_palm_width(processor):
     result = processor.extract_palm_roi(np.full((100, 100, 3), 120, dtype=np.uint8))
 
     assert result is None
+
+
+def test_extract_palm_roi_normalizes_opposite_hand_rotation(processor, monkeypatch):
+    class FakeLandmarker:
+        def close(self):
+            pass
+
+        def detect(self, image):
+            return SimpleNamespace(hand_landmarks=[fake_landmarks({
+                0: (0.50, 0.80),
+                5: (0.65, 0.45),
+                9: (0.50, 0.42),
+                17: (0.35, 0.45),
+            })])
+
+    angles = []
+
+    def fake_rotation_matrix(center, angle, scale):
+        angles.append(angle)
+        return np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+
+    processor._hand_landmarker = FakeLandmarker()
+    monkeypatch.setattr(palm_processor_module.cv2, "getRotationMatrix2D", fake_rotation_matrix)
+
+    roi = processor.extract_palm_roi(np.full((100, 200, 3), 120, dtype=np.uint8))
+
+    assert roi is not None
+    assert angles == [0.0]
 
 
 def test_compute_similarity_skips_incompatible_embedding_dimensions(processor):

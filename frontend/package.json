@@ -4,8 +4,9 @@
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 3000",
-    "build": "vite build",
+    "sync:static-vendor": "node scripts/sync-static-vendor.mjs",
+    "dev": "bun run sync:static-vendor && vite --host 127.0.0.1 --port 3000",
+    "build": "bun run sync:static-vendor && vite build",
     "start": "vite preview --host 127.0.0.1 --port 3000",
     "test": "vitest run --config vitest.config.ts"
   },

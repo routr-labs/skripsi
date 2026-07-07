@@ -103,19 +103,19 @@ let drawUtils      = null;
 
 async function initMediaPipe() {
   try {
-    // Dynamic import to avoid blocking page load if CDN fails
-    const mediapipe = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    // Dynamic import to avoid blocking page load if local assets are missing
+    const mediapipe = await import('/static/vendor/mediapipe/vision_bundle.mjs');
     HandLandmarker = mediapipe.HandLandmarker;
     FilesetResolver = mediapipe.FilesetResolver;
     DrawingUtils = mediapipe.DrawingUtils;
 
     const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      '/static/vendor/mediapipe/wasm'
     );
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+          '/static/vendor/mediapipe/hand_landmarker.task',
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
@@ -1385,20 +1385,25 @@ async function loadUsers() {
 }
 
 function renderUsers(users) {
-  const grid = $('usersGrid');
+  let tableBody = $('usersTableBody');
+  const legacyGrid = $('usersGrid');
+  if (!tableBody && legacyGrid) {
+    legacyGrid.className = 'users-table-wrap';
+    legacyGrid.innerHTML = '<table class="users-table"><thead><tr><th>NIM</th><th>Name</th><th>Registered</th><th>Actions</th></tr></thead><tbody id="usersTableBody"></tbody></table>';
+    tableBody = $('usersTableBody');
+  }
+  if (!tableBody) return;
   if (!users.length) {
-    grid.innerHTML = '<div class="users-empty">No users enrolled yet.</div>';
+    tableBody.innerHTML = '<tr class="users-empty-row"><td colspan="4"><div class="users-empty">No users enrolled yet.</div></td></tr>';
     return;
   }
-  grid.innerHTML = users.map((u) => `
-    <div class="user-chip" id="chip-${u.id}">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" stroke-width="1.2"/>
-        <path d="M2 13c0-2.761 2.239-4 5-4s5 1.239 5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-      </svg>
-      <span class="user-chip-name">${esc(u.nim)} — ${esc(u.name)}</span>
-      <button class="user-chip-delete" onclick="window.deleteUser(${u.id})" title="Remove">×</button>
-    </div>`).join('');
+  tableBody.innerHTML = users.map((u) => `
+    <tr id="user-${u.id}">
+      <td>${esc(u.nim)}</td>
+      <td>${esc(u.name)}</td>
+      <td>${esc(u.created_at || '—')}</td>
+      <td><div class="user-table-actions"><button class="user-action-btn danger" onclick="window.deleteUser(${u.id})" title="Remove">Delete</button></div></td>
+    </tr>`).join('');
 }
 
 window.deleteUser = async (id) => {

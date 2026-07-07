@@ -1,8 +1,8 @@
 type MediaPipeVisionModule = any
 
-const VISION_BUNDLE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-const HAND_LANDMARKER_TASK_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+const VISION_BUNDLE_URL = '/static/vendor/mediapipe/vision_bundle.mjs'
+const WASM_URL = '/static/vendor/mediapipe/wasm'
+const HAND_LANDMARKER_TASK_URL = '/static/vendor/mediapipe/hand_landmarker.task'
 
 export async function createHandLandmarker() {
   const mediapipe = (await import(/* @vite-ignore */ VISION_BUNDLE_URL)) as MediaPipeVisionModule

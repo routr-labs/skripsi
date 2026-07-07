@@ -161,6 +161,10 @@ class PalmProcessor:
             return None
 
         angle = float(np.degrees(np.arctan2(pinky_pt[1] - index_pt[1], pinky_pt[0] - index_pt[0])))
+        if angle > 90.0:
+            angle -= 180.0
+        elif angle < -90.0:
+            angle += 180.0
         center = (wrist_pt + middle_pt) / 2.0
         rotation = cv2.getRotationMatrix2D((float(center[0]), float(center[1])), angle, 1.0)
         rotated = cv2.warpAffine(frame_rgb, rotation, (w, h), flags=cv2.INTER_LINEAR)

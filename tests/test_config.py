@@ -2,6 +2,13 @@ import importlib
 import os
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def skip_project_dotenv(monkeypatch):
+    monkeypatch.setenv("PALMGATE_SKIP_DOTENV", "1")
+
 
 def test_device_runtime_env_overrides(monkeypatch):
     monkeypatch.setenv("DEVICE_RUNTIME_ENABLED", "1")
@@ -59,6 +66,8 @@ def test_embedding_model_defaults(monkeypatch):
     monkeypatch.delenv("MODEL_METADATA_PATH", raising=False)
     monkeypatch.delenv("SIMILARITY_THRESHOLD", raising=False)
     monkeypatch.delenv("EMBEDDING_DIM", raising=False)
+    monkeypatch.delenv("ENROLLMENT_TTA_ENABLED", raising=False)
+    monkeypatch.delenv("RECOGNITION_TTA_ENABLED", raising=False)
 
     import app.config as config
     importlib.reload(config)

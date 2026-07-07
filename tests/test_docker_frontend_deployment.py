@@ -66,7 +66,8 @@ def test_github_actions_publishes_frontend_ghcr_image():
     workflow = Path(".github/workflows/docker.yml").read_text()
 
     assert "FRONTEND_IMAGE_NAME: ghcr.io/nhaidaar/palmprint-fe" in workflow
-    assert "context: ./frontend" in workflow
+    assert "context: ." in workflow
+    assert "file: frontend/Dockerfile" in workflow
     assert "${{ env.FRONTEND_IMAGE_NAME }}:latest" in workflow
     assert "${{ env.FRONTEND_IMAGE_NAME }}:${{ env.SHORT_SHA }}" in workflow
 

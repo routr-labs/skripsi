@@ -6,9 +6,6 @@
   <title>PalmGate — Palm access</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="shortcut icon" href="/static/favicon.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -473,8 +470,22 @@
         <div class="users-header">
           <h3 class="users-title">Enrolled users</h3>
         </div>
-        <div class="users-grid" id="usersGrid">
-          <div class="users-empty">No users enrolled yet.</div>
+        <div class="users-table-wrap">
+          <table class="users-table">
+            <thead>
+              <tr>
+                <th>NIM</th>
+                <th>Name</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody">
+              <tr class="users-empty-row">
+                <td colspan="4"><div class="users-empty">No users enrolled yet.</div></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

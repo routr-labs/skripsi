@@ -46,6 +46,12 @@ palmprint.db
 *.pt
 *.pth
 
+# Vendored browser runtime assets
+!app/static/vendor/
+!app/static/vendor/**/
+!app/static/vendor/mediapipe/hand_landmarker.task
+frontend/public/static/vendor/
+
 # Docker
 *.log
 
@@ -61,7 +67,8 @@ desktop.ini
 
 # Unnecessary / local things
 .superpowers/
-data/captures/*
+data/
+*/data/
 docs/
 designs/
 Dataset*/

@@ -21,6 +21,33 @@ type DeviceRegistrationStatus = {
   total_required?: number
 }
 
+type RegisterPanelProps = {
+  active: boolean
+}
+
+type RegistrationMode = 'camera' | 'upload'
+export type RegistrationBusyAction = 'start' | 'capture' | 'finalize' | 'upload' | null
+
+type RegistrationButton = Exclude<RegistrationBusyAction, null>
+
+const READY_REGISTRATION_LABELS: Record<RegistrationButton, string> = {
+  start: 'Start registration',
+  capture: 'Capture sample',
+  finalize: 'Finalize',
+  upload: 'Register from uploads',
+}
+
+const BUSY_REGISTRATION_LABELS: Record<RegistrationButton, string> = {
+  start: 'Starting...',
+  capture: 'Capturing...',
+  finalize: 'Saving...',
+  upload: 'Processing samples...',
+}
+
+export function registrationButtonText(button: RegistrationButton, busy: RegistrationBusyAction) {
+  return busy === button ? BUSY_REGISTRATION_LABELS[button] : READY_REGISTRATION_LABELS[button]
+}
+
 const ALL_HANDS: Hand[] = ['left', 'right']
 
 function stripDataUrl(value: string) {
@@ -49,7 +76,7 @@ function drawHandOverlay(canvas: HTMLCanvasElement, video: HTMLVideoElement, lan
   }
 }
 
-export function RegisterPanel() {
+export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
@@ -67,10 +94,12 @@ export function RegisterPanel() {
   const [usbDeviceMode, setUsbDeviceMode] = useState(false)
   const [devFeatures, setDevFeatures] = useState(false)
   const [active, setActive] = useState(false)
+  const [registrationMode, setRegistrationMode] = useState<RegistrationMode>('camera')
   const [status, setStatus] = useState<DeviceRegistrationStatus | null>(null)
   const [uploadFiles, setUploadFiles] = useState<Record<Hand, FileList | null>>({ left: null, right: null })
   const [error, setError] = useState('')
   const [message, setMessage] = useState('Choose left, right, or both hands.')
+  const [busyAction, setBusyAction] = useState<RegistrationBusyAction>(null)
   const [registrationQualityLine, setRegistrationQualityLine] = useState('Show your full palm to the camera.')
 
   activeRef.current = active
@@ -146,7 +175,7 @@ export function RegisterPanel() {
   }, [active, usbDeviceMode])
 
   function toggleHand(hand: Hand) {
-    if (active) return
+    if (active || registrationBusy) return
     setSelectedHands((current) => {
       const next = current.includes(hand) ? current.filter((item) => item !== hand) : [...current, hand]
       return next.length ? next : current
@@ -195,6 +224,9 @@ export function RegisterPanel() {
   captureSampleRef.current = () => captureBrowserSample()
 
   async function finalizeBrowserRegistration() {
+    setBusyAction('finalize')
+    setError('')
+    setMessage('Processing samples on device...')
     try {
       await apiJson('/api/register', {
         method: 'POST',
@@ -211,6 +243,8 @@ export function RegisterPanel() {
       setMessage('Registration saved.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
+    } finally {
+      setBusyAction(null)
     }
   }
 
@@ -219,16 +253,20 @@ export function RegisterPanel() {
       setError('NIM and full name are required')
       return
     }
+    setBusyAction('start')
+    setError('')
+    setMessage('Starting registration on device...')
     try {
       await apiJson('/api/device-registration/start', {
         method: 'POST',
         body: JSON.stringify({ nim, name, hands: selectedHands }),
       })
       setActive(true)
-      setError('')
       await refreshUsbStatus()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'USB registration failed')
+    } finally {
+      setBusyAction(null)
     }
   }
 
@@ -239,21 +277,31 @@ export function RegisterPanel() {
   }
 
   async function captureUsbSample() {
+    setBusyAction('capture')
+    setError('')
+    setMessage('Processing sample on device...')
     try {
       await apiJson('/api/device-registration/capture', { method: 'POST' })
       await refreshUsbStatus()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'USB capture failed')
+    } finally {
+      setBusyAction(null)
     }
   }
 
   async function finalizeUsbRegistration() {
+    setBusyAction('finalize')
+    setError('')
+    setMessage('Processing samples on device...')
     try {
       await apiJson('/api/device-registration/finalize', { method: 'POST' })
       setActive(false)
       setMessage('Registration saved.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'USB finalize failed')
+    } finally {
+      setBusyAction(null)
     }
   }
 
@@ -277,20 +325,31 @@ export function RegisterPanel() {
   }
 
   async function finalizeUploadRegistration() {
-    const images: string[] = []
-    const hands: Hand[] = []
+    if (!nim.trim() || !name.trim()) {
+      setError('NIM and full name are required')
+      return
+    }
     for (const hand of selectedHands) {
       const files = Array.from(uploadFiles[hand] ?? [])
       if (files.length !== REGISTRATION_CAPTURES_PER_HAND) {
         setError(`Select exactly 5 ${hand} hand photos.`)
         return
       }
-      for (const file of files) {
-        images.push(stripDataUrl(await fileToDataUrl(file)))
-        hands.push(hand)
-      }
     }
+
+    setBusyAction('upload')
+    setError('')
+    setMessage('Processing uploaded samples on device...')
     try {
+      const images: string[] = []
+      const hands: Hand[] = []
+      for (const hand of selectedHands) {
+        const files = Array.from(uploadFiles[hand] ?? [])
+        for (const file of files) {
+          images.push(stripDataUrl(await fileToDataUrl(file)))
+          hands.push(hand)
+        }
+      }
       await apiJson('/api/register', {
         method: 'POST',
         body: JSON.stringify({ nim, name, images, hands, is_roi: false, source: 'upload' }),
@@ -298,55 +357,147 @@ export function RegisterPanel() {
       setMessage('Upload registration saved.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload registration failed')
+    } finally {
+      setBusyAction(null)
     }
   }
 
+  const registrationBusy = busyAction !== null
   const complete = selectedHands.every((hand) => countHand(samples, hand) === REGISTRATION_CAPTURES_PER_HAND)
+  const leftCount = usbDeviceMode ? status?.left_count ?? 0 : countHand(samples, 'left')
+  const rightCount = usbDeviceMode ? status?.right_count ?? 0 : countHand(samples, 'right')
+  const current = currentHand()
+  const currentCount = current ? countHand(samples, current) : 0
+  const sampleTitle = current ? `${current[0].toUpperCase() + current.slice(1)} hand sample ${currentCount + 1}/${REGISTRATION_CAPTURES_PER_HAND}: Center palm` : 'All samples captured'
+  const sampleDesc = current ? `Use your actual ${current} hand: palm facing camera, fingers up, wrist visible.` : 'Finalize registration to save this user.'
+  const uploadLeftCount = Array.from(uploadFiles.left ?? []).length
+  const uploadRightCount = Array.from(uploadFiles.right ?? []).length
 
   return (
-    <section className="panel register-panel">
-      <div className="panel-heading"><h2>Register</h2><span>{message}</span></div>
-      {error && <p className="error-text">{error}</p>}
-      <p id="registrationQualityLine" className="quality-line">{registrationQualityLine}</p>
-      <div className="form-grid">
-        <input aria-label="NIM" placeholder="NIM" value={nim} onChange={(event) => setNim(event.target.value)} />
-        <input aria-label="Full name" placeholder="Full name" value={name} onChange={(event) => setName(event.target.value)} />
-      </div>
-      <div className="hand-chips">
-        {ALL_HANDS.map((hand) => (
-          <button key={hand} type="button" className={selectedHands.includes(hand) ? 'active' : ''} onClick={() => toggleHand(hand)}>
-            {hand} {usbDeviceMode ? status?.[`${hand}_count`] ?? 0 : countHand(samples, hand)} / {REGISTRATION_CAPTURES_PER_HAND}
-          </button>
-        ))}
-      </div>
-      <div className="camera-frame">
-        {usbDeviceMode ? <img id="usbRegistrationPreview" src={USB_PREVIEW_STREAM_URL} alt="USB registration preview" /> : (
-          <>
-            <video ref={videoRef} id="videoReg" autoPlay playsInline muted />
-            <canvas ref={overlayRef} id="overlayCanvasReg" />
-          </>
-        )}
+    <section className={`panel${panelActive ? ' active' : ''}`} id="panel-register">
+      <div className="register-layout unified">
+        <div className="register-camera-col">
+          <div className="camera-frame reg-camera" id="regCameraFrame">
+            {usbDeviceMode ? (
+              <img id="usbRegistrationPreview" className="usb-preview" src={USB_PREVIEW_STREAM_URL} alt="USB camera preview" />
+            ) : (
+              <video ref={videoRef} id="videoReg" autoPlay playsInline muted />
+            )}
+            <canvas ref={overlayRef} id="overlayCanvasReg" className="overlay-canvas" />
+            <svg className="hand-guide-overlay" id="handGuideOverlay" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <circle className="guide-size-ring" id="guideSizeRing" cx="50" cy="50" r="35" fill="none" strokeWidth="2" strokeDasharray="4 2" />
+              <line className="guide-crosshair" id="guideCrossH" x1="45" y1="50" x2="55" y2="50" strokeWidth="1" />
+              <line className="guide-crosshair" id="guideCrossV" x1="50" y1="45" x2="50" y2="55" strokeWidth="1" />
+              <path className="guide-rotation-arc" id="guideRotationArc" d="" fill="none" strokeWidth="2" />
+            </svg>
+            <div className="autoscan-ring" id="autoscanRingReg" style={{ display: panelActive ? undefined : 'none' }}>
+              <svg viewBox="0 0 100 100" className="ring-svg" aria-hidden="true">
+                <circle className="ring-track" cx="50" cy="50" r="42" />
+                <circle className="ring-fill" cx="50" cy="50" r="42" id="ringFillReg" />
+              </svg>
+              <span className="ring-label" id="ringLabelReg">Hold</span>
+            </div>
+            <div className="palm-guide" id="palmGuideReg">
+              <div className="guide-ring outer" />
+              <div className="guide-label">Align palm</div>
+            </div>
+            <div className="capture-flash" id="captureFlashReg" />
+            <div className="brightness-badge" id="brightnessBadgeReg" style={{ display: 'none' }} />
+          </div>
+
+          <div className="guidance-metrics" id="guidanceMetrics">
+            <div className="metric-item" id="metricSize"><span className="metric-icon">↕</span> Size: <strong>--</strong></div>
+            <div className="metric-item" id="metricRotation"><span className="metric-icon">↺</span> Rotation: <strong>--</strong></div>
+            <div className="metric-item" id="metricPosition"><span className="metric-icon">↔</span> Position: <strong>--</strong></div>
+          </div>
+        </div>
+
+        <div className="register-form-col">
+          <div className="form-block">
+            <h2 className="form-title">Register new user</h2>
+            <p className="form-desc">Choose left, right, or both. Default captures 5 left-hand and 5 right-hand samples so either hand can unlock.</p>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="userNim">NIM</label>
+              <input className="field-input" type="text" id="userNim" placeholder="Enter NIM…" autoComplete="off" spellCheck="false" value={nim} onChange={(event) => setNim(event.target.value)} />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="userName">Full name</label>
+              <input className="field-input" type="text" id="userName" placeholder="Enter name…" autoComplete="off" spellCheck="false" value={name} onChange={(event) => setName(event.target.value)} />
+            </div>
+
+            <div className="registration-mode-tabs" id="registrationModeTabs" role="tablist" aria-label="Registration method">
+              <button className={`registration-mode-tab${registrationMode === 'camera' ? ' active' : ''}`} id="cameraRegistrationTab" type="button" role="tab" aria-selected={registrationMode === 'camera'} aria-controls="cameraRegistrationPanel" data-registration-mode="camera" onClick={() => setRegistrationMode('camera')}>
+                <strong>Camera capture</strong>
+                <span>Guided live captures</span>
+              </button>
+              <button className={`registration-mode-tab dev-only${registrationMode === 'upload' ? ' active' : ''}`} id="uploadRegistrationTab" type="button" role="tab" aria-selected={registrationMode === 'upload'} aria-controls="uploadRegistrationPanel" data-registration-mode="upload" hidden={!devFeatures} onClick={() => setRegistrationMode('upload')}>
+                <strong>Upload images</strong>
+                <span>Selected hands · 5 photos each</span>
+              </button>
+            </div>
+
+            <div className={`registration-mode-panel${registrationMode === 'camera' ? ' active' : ''}`} id="cameraRegistrationPanel" data-registration-mode-panel="camera" role="tabpanel" aria-labelledby="cameraRegistrationTab">
+              <div className="registration-status" id="registrationStatus">
+                <div className="registration-hand-select" aria-label="Hands to register">
+                  <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="registrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} onClick={() => toggleHand('left')}>Left <span id="registrationLeftCount">{leftCount}/5</span></button>
+                  <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="registrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} onClick={() => toggleHand('right')}>Right <span id="registrationRightCount">{rightCount}/5</span></button>
+                </div>
+                <div className="sample-title" id="regSampleTitle">{sampleTitle}</div>
+                <div className="sample-desc" id="regSampleDesc">{sampleDesc}</div>
+                <div className="capture-dots hand-dots" id="captureDots">
+                  {ALL_HANDS.map((hand) => (
+                    <div key={hand} className={`capture-dot-group${selectedHands.includes(hand) ? '' : ' muted'}`} data-hand={hand}>
+                      <span className="dot-label">{hand[0].toUpperCase() + hand.slice(1)}</span>
+                      {[0, 1, 2, 3, 4].map((index) => <span key={index} className={`dot${countHand(samples, hand) > index || (usbDeviceMode && ((hand === 'left' ? status?.left_count : status?.right_count) ?? 0) > index) ? ' filled' : ''}`} data-hand={hand} data-i={index} />)}
+                    </div>
+                  ))}
+                </div>
+                <div className={`registration-quality-line ${error ? 'bad' : active ? 'warn' : 'neutral'}`} id="registrationQualityLine">{error || registrationQualityLine}</div>
+              </div>
+
+              <div className="register-hint" id="registerHint">{message}</div>
+              <div className="register-actions">
+                <button className="btn btn-primary" id="btnStartRegistration" type="button" disabled={active || registrationBusy} onClick={() => void (usbDeviceMode ? startUsbRegistration() : startBrowserRegistration())}>{registrationButtonText('start', busyAction)}</button>
+                <button className="btn btn-secondary" id="btnCaptureSample" type="button" disabled={!active || registrationBusy || (!usbDeviceMode && !currentHand())} onClick={() => void (usbDeviceMode ? captureUsbSample() : captureBrowserSample())}>{registrationButtonText('capture', busyAction)}</button>
+                <button className="btn btn-primary" id="btnFinalizeRegistration" type="button" disabled={!active || registrationBusy || (!usbDeviceMode && !complete)} onClick={() => void (usbDeviceMode ? finalizeUsbRegistration() : finalizeBrowserRegistration())}>{registrationButtonText('finalize', busyAction)}</button>
+                <button className="btn btn-ghost" id="btnCancelRegistration" type="button" disabled={!active || registrationBusy} onClick={() => void (usbDeviceMode ? cancelUsbRegistration() : setActive(false))}>Cancel</button>
+              </div>
+            </div>
+
+            <div className={`registration-mode-panel dev-only${registrationMode === 'upload' ? ' active' : ''}`} id="uploadRegistrationPanel" data-registration-mode-panel="upload" role="tabpanel" aria-labelledby="uploadRegistrationTab" hidden={!devFeatures}>
+              <div className="registration-hand-select upload-hand-select" aria-label="Hands to upload">
+                <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="uploadRegistrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} onClick={() => toggleHand('left')}>Left <span id="uploadRegistrationLeftCount">{uploadLeftCount}/5</span></button>
+                <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="uploadRegistrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} onClick={() => toggleHand('right')}>Right <span id="uploadRegistrationRightCount">{uploadRightCount}/5</span></button>
+              </div>
+              <div className="upload-registration-grid">
+                {ALL_HANDS.map((hand) => {
+                  const files = Array.from(uploadFiles[hand] ?? [])
+                  return (
+                    <div key={hand} className={`upload-picker${files.length === REGISTRATION_CAPTURES_PER_HAND ? ' ok' : files.length ? ' bad' : ''}`} id={hand === 'left' ? 'uploadLeftPicker' : 'uploadRightPicker'}>
+                      <div className="upload-picker-head"><strong>{hand[0].toUpperCase() + hand.slice(1)} hand photos</strong><span className="upload-count" id={hand === 'left' ? 'uploadLeftCount' : 'uploadRightCount'}>{files.length}/5</span></div>
+                      <label className="upload-file-label" htmlFor={hand === 'left' ? 'uploadLeftFiles' : 'uploadRightFiles'}>
+                        <input className="upload-file-input" id={hand === 'left' ? 'uploadLeftFiles' : 'uploadRightFiles'} type="file" accept="image/*" multiple disabled={busyAction === 'upload'} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles((current) => ({ ...current, [hand]: event.target.files }))} />
+                        <span>Select exactly 5 full-hand photos</span>
+                      </label>
+                      <div className="upload-file-list" id={hand === 'left' ? 'uploadLeftList' : 'uploadRightList'}>{files.length ? files.map((file) => file.name).join(', ') : 'No files selected.'}</div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="register-hint" id="uploadRegisterHint">Selected hands need exactly 5 full-hand photos each. PalmGate will detect the palm ROI with the same runtime MediaPipe path.</div>
+              <div className="register-actions upload-register-actions">
+                <button className="btn btn-primary" id="btnUploadRegister" type="button" disabled={!nim.trim() || !name.trim() || busyAction === 'upload'} onClick={() => void finalizeUploadRegistration()}>{registrationButtonText('upload', busyAction)}</button>
+                <button className="btn btn-ghost" id="btnClearUploadFiles" type="button" disabled={busyAction === 'upload'} onClick={() => setUploadFiles({ left: null, right: null })}>Clear files</button>
+              </div>
+            </div>
+
+            <div className={`register-feedback${error ? ' error' : message.includes('saved') ? ' success' : ''}`} id="registerFeedback">{error || message}</div>
+          </div>
+        </div>
       </div>
       <canvas ref={canvasRef} hidden />
-      <div className="register-actions">
-        {!active && <button type="button" onClick={() => void (usbDeviceMode ? startUsbRegistration() : startBrowserRegistration())}>Start registration</button>}
-        {active && !usbDeviceMode && <button type="button" disabled={!currentHand()} onClick={() => captureBrowserSample()}>Capture sample</button>}
-        {active && usbDeviceMode && <button type="button" onClick={() => void captureUsbSample()}>Capture sample</button>}
-        {active && !usbDeviceMode && <button type="button" disabled={!complete} onClick={() => void finalizeBrowserRegistration()}>Finalize</button>}
-        {active && usbDeviceMode && <button type="button" onClick={() => void finalizeUsbRegistration()}>Finalize</button>}
-        {active && <button type="button" onClick={() => void (usbDeviceMode ? cancelUsbRegistration() : setActive(false))}>Cancel</button>}
-      </div>
-      {devFeatures && (
-        <div className="upload-registration">
-          <h3>Upload images</h3>
-          {ALL_HANDS.map((hand) => (
-            <label key={hand}>{hand} hand photos
-              <input type="file" accept="image/*" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles((current) => ({ ...current, [hand]: event.target.files }))} />
-            </label>
-          ))}
-          <button type="button" onClick={() => void finalizeUploadRegistration()}>Upload register</button>
-        </div>
-      )}
     </section>
   )
 }
