@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - master
-      - fix/recognition
-      - feat/admin-dashboard
   workflow_dispatch:
 
 permissions:
