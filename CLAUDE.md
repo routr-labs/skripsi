@@ -14,6 +14,15 @@ PalmGate is a palmprint recognition system for smart door locks. It runs in two 
 # Run development server
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
+# Run frontend development server
+cd frontend && bun run dev
+
+# Run Docker browser deployment
+PALMGATE_HTTP_PORT=8080 docker compose --profile browser up --build
+
+# Run Docker USB deployment
+PALMGATE_HTTP_PORT=8080 docker compose --profile usb up --build
+
 # Run tests
 python -m pytest tests/ -v
 

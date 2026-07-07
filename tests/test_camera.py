@@ -18,3 +18,25 @@ def test_opencv_camera_source_opens_device_path(monkeypatch):
     camera.OpenCVCameraSource("/dev/video1")
 
     assert opened_sources == ["/dev/video1"]
+
+
+def test_opencv_camera_source_casts_numeric_device_path_to_int(monkeypatch):
+    import app.camera as camera
+
+    opened_sources = []
+
+    class FakeCapture:
+        def __init__(self, source):
+            opened_sources.append(source)
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            pass
+
+    monkeypatch.setattr(camera.cv2, "VideoCapture", FakeCapture)
+
+    camera.OpenCVCameraSource("0")
+
+    assert opened_sources == [0]

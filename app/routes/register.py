@@ -7,12 +7,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import (
+    DEV_FEATURES_ENABLED,
     DUPLICATE_THRESHOLD,
     ENROLLMENT_TTA_ENABLED,
     REGISTRATION_CAPTURES_PER_HAND,
     REGISTRATION_HANDS,
     REGISTRATION_MIN_VALID_PER_HAND,
-    REGISTRATION_TOTAL_CAPTURES,
 )
 from app.routes.recognize import decode_base64_image
 from app.services.embedding_templates import build_hand_templates, overall_template
@@ -25,6 +25,7 @@ class RegisterRequest(BaseModel):
     name: str
     images: list
     hands: list[str] = []
+    source: str = "camera"
     is_roi: bool = False          # True when the browser pre-cropped all palm ROIs
     rotation_angle: float = 0.0   # Kept for backward compatibility; new ROIs are already aligned
 
@@ -45,16 +46,22 @@ async def register(req: RegisterRequest):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
 
-    required_detail = (
-        f"Need exactly {REGISTRATION_CAPTURES_PER_HAND} left-hand and "
-        f"{REGISTRATION_CAPTURES_PER_HAND} right-hand palm images"
-    )
+    source = req.source.strip().lower()
+    if source not in {"camera", "upload"}:
+        raise HTTPException(status_code=400, detail="Invalid registration source")
+    if source == "upload" and not DEV_FEATURES_ENABLED:
+        raise HTTPException(status_code=403, detail="Upload registration is only available in development mode")
+
+    required_detail = f"Need exactly {REGISTRATION_CAPTURES_PER_HAND} images for each selected hand"
     hands = [hand.lower() for hand in req.hands]
-    if len(req.images) != REGISTRATION_TOTAL_CAPTURES or len(hands) != len(req.images):
+    if not hands:
+        raise HTTPException(status_code=400, detail="Select at least one hand to register")
+    if len(hands) != len(req.images):
         raise HTTPException(status_code=400, detail=required_detail)
     if any(hand not in REGISTRATION_HANDS for hand in hands):
         raise HTTPException(status_code=400, detail=required_detail)
-    if any(hands.count(hand) != REGISTRATION_CAPTURES_PER_HAND for hand in REGISTRATION_HANDS):
+    selected_hands = tuple(hand for hand in REGISTRATION_HANDS if hand in hands)
+    if any(hands.count(hand) != REGISTRATION_CAPTURES_PER_HAND for hand in selected_hands):
         raise HTTPException(status_code=400, detail=required_detail)
 
     session_id = str(uuid.uuid4())
@@ -92,14 +99,21 @@ async def register(req: RegisterRequest):
     try:
         templates = build_hand_templates(
             samples,
-            required_hands=REGISTRATION_HANDS,
+            required_hands=selected_hands,
             min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    embedding_hands = list(templates.keys())
-    template_embeddings = [templates[hand] for hand in embedding_hands]
+    template_hands = list(templates.keys())
+    template_embeddings = [templates[hand] for hand in template_hands]
+    raw_embeddings = []
+    raw_embedding_hands = []
+    for hand in selected_hands:
+        for sample in samples:
+            if sample["hand"] == hand:
+                raw_embeddings.append(sample["embedding"])
+                raw_embedding_hands.append(hand)
     avg_embedding = overall_template(templates)
 
     stored = db.get_all_embeddings()
@@ -118,8 +132,8 @@ async def register(req: RegisterRequest):
             req.name.strip(),
             avg_embedding,
             nim=nim,
-            individual_embeddings=template_embeddings,
-            embedding_hands=embedding_hands,
+            individual_embeddings=raw_embeddings,
+            embedding_hands=raw_embedding_hands,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

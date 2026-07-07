@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import logging
 import queue
 import threading
 import time
@@ -21,19 +22,23 @@ from app.config import (
     REGISTRATION_CAPTURES_PER_HAND,
     REGISTRATION_HANDS,
     REGISTRATION_MIN_VALID_PER_HAND,
-    REGISTRATION_TOTAL_CAPTURES,
     SIMILARITY_THRESHOLD,
 )
+from app.lock_controller import NoopLockController, build_lock_controller
 from app.services.embedding_templates import build_hand_templates, overall_template
 from app.services.recognition_service import match_embedding_and_log
 from app.services.registration_quality import SAMPLE_TARGETS, evaluate_guidance
+from app.services.scan_quality import scan_quality_failures
 
+
+log = logging.getLogger("palmgate.device_runtime")
 
 @dataclass
 class DeviceRegistrationSession:
     id: str
     nim: str
     name: str
+    hands: tuple[str, ...] = REGISTRATION_HANDS
     current_sample_index: int = 0
     captured_samples: list = field(default_factory=list)
     last_guidance: dict | None = None
@@ -84,6 +89,7 @@ class DeviceRuntime:
         preview_frame_interval_ms: int = DEVICE_PREVIEW_FRAME_INTERVAL_MS,
         heartbeat_ms: int = DEVICE_STATUS_HEARTBEAT_MS,
         threshold: float = SIMILARITY_THRESHOLD,
+        lock_controller=None,
     ):
         self.camera = camera
         self.palm_processor = palm_processor
@@ -95,6 +101,7 @@ class DeviceRuntime:
         self.preview_frame_interval_ms = preview_frame_interval_ms
         self.heartbeat_ms = heartbeat_ms
         self.threshold = threshold
+        self.lock_controller = lock_controller or NoopLockController()
         self.hand_seen_since_ms = None
         self.cooldown_until_ms = 0
         self.last_heartbeat_ms = None
@@ -104,6 +111,7 @@ class DeviceRuntime:
         self._registration_lock = threading.Lock()
         self.scan_state = {"stage": "starting", "metrics": None}
         self.latest_frame = None
+        self._camera_lock = threading.Lock()
         self._frame_lock = threading.Lock()
         self._thread = None
         self._preview_thread = None
@@ -111,7 +119,8 @@ class DeviceRuntime:
         self.scan_broadcaster = ScanEventBroadcaster()
 
     def capture_preview_frame(self):
-        frame = self.camera.read()
+        with self._camera_lock:
+            frame = self.camera.read()
         with self._frame_lock:
             self.latest_frame = frame.copy()
         return frame
@@ -126,9 +135,27 @@ class DeviceRuntime:
             frame = self.capture_preview_frame()
         return frame
 
-    def _hand_for_sample_index(self, index: int) -> str:
+    def _selected_registration_hands(self, hands=None) -> tuple[str, ...]:
+        if hands is None:
+            return REGISTRATION_HANDS
+        selected = []
+        for hand in hands:
+            clean = str(hand).lower()
+            if clean not in REGISTRATION_HANDS:
+                raise RuntimeError("Select left, right, or both hands")
+            if clean not in selected:
+                selected.append(clean)
+        if not selected:
+            raise RuntimeError("Select at least one hand to register")
+        return tuple(hand for hand in REGISTRATION_HANDS if hand in selected)
+
+    def _registration_total_captures(self, hands=None) -> int:
+        return REGISTRATION_CAPTURES_PER_HAND * len(hands or REGISTRATION_HANDS)
+
+    def _hand_for_sample_index(self, index: int, hands=None) -> str:
+        selected_hands = hands or REGISTRATION_HANDS
         hand_index = index // REGISTRATION_CAPTURES_PER_HAND
-        return REGISTRATION_HANDS[min(hand_index, len(REGISTRATION_HANDS) - 1)]
+        return selected_hands[min(hand_index, len(selected_hands) - 1)]
 
     def _target_index_for_sample_index(self, index: int) -> int:
         return index % REGISTRATION_CAPTURES_PER_HAND
@@ -141,7 +168,7 @@ class DeviceRuntime:
 
             counts = {hand: 0 for hand in REGISTRATION_HANDS}
             for i, sample in enumerate(session.captured_samples):
-                hand = sample.get("hand", self._hand_for_sample_index(i))
+                hand = sample.get("hand", self._hand_for_sample_index(i, session.hands))
                 if hand in counts:
                     counts[hand] += 1
 
@@ -155,8 +182,8 @@ class DeviceRuntime:
                 "captured_count": len(session.captured_samples),
                 "guidance": session.last_guidance,
                 "required_per_hand": REGISTRATION_CAPTURES_PER_HAND,
-                "total_required": REGISTRATION_TOTAL_CAPTURES,
-                "current_hand": self._hand_for_sample_index(session.current_sample_index),
+                "total_required": self._registration_total_captures(session.hands),
+                "current_hand": self._hand_for_sample_index(session.current_sample_index, session.hands),
                 "left_count": counts.get("left", 0),
                 "right_count": counts.get("right", 0),
             }
@@ -178,9 +205,10 @@ class DeviceRuntime:
             return None
         return encoded.tobytes()
 
-    def start_registration(self, nim: str, name: str):
+    def start_registration(self, nim: str, name: str, hands=None):
         clean_nim = nim.strip()
         clean_name = name.strip()
+        selected_hands = self._selected_registration_hands(hands)
         if not clean_nim:
             raise RuntimeError("NIM is required")
         if not clean_name:
@@ -192,6 +220,7 @@ class DeviceRuntime:
                 id=str(uuid.uuid4()),
                 nim=clean_nim,
                 name=clean_name,
+                hands=selected_hands,
             )
             self.worker_state = "registration_active"
             self.hand_seen_since_ms = None
@@ -207,7 +236,7 @@ class DeviceRuntime:
         with self._registration_lock:
             if self.registration_session is None:
                 raise RuntimeError("No registration active")
-            if self.registration_session.current_sample_index >= REGISTRATION_TOTAL_CAPTURES:
+            if self.registration_session.current_sample_index >= self._registration_total_captures(self.registration_session.hands):
                 raise RuntimeError("All registration samples captured")
             guidance = self.registration_session.last_guidance
             if not guidance or not guidance.get("acceptable", False):
@@ -221,7 +250,7 @@ class DeviceRuntime:
             base_data_dir = "/data" if os.path.exists("/data") else "data"
             save_dir = os.path.join(base_data_dir, "captures", f"{self.registration_session.nim}_{self.registration_session.id}")
             os.makedirs(save_dir, exist_ok=True)
-            hand = self._hand_for_sample_index(sample_index)
+            hand = self._hand_for_sample_index(sample_index, self.registration_session.hands)
             cv2.imwrite(os.path.join(save_dir, f"{hand}_{sample_index}.jpg"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
             embedding = self.palm_processor.get_embedding_from_notebook_frame(
@@ -249,25 +278,32 @@ class DeviceRuntime:
             samples = []
             for item in self.registration_session.captured_samples:
                 samples.append({
-                    "hand": item.get("hand", self._hand_for_sample_index(item["sample_index"])),
+                    "hand": item.get("hand", self._hand_for_sample_index(item["sample_index"], self.registration_session.hands)),
                     "embedding": item["embedding"],
                 })
 
             try:
                 templates = build_hand_templates(
                     samples,
-                    required_hands=REGISTRATION_HANDS,
+                    required_hands=self.registration_session.hands,
                     min_per_hand=REGISTRATION_MIN_VALID_PER_HAND,
                 )
             except ValueError as exc:
                 raise RuntimeError("Not enough valid registration samples") from exc
 
-            embedding_hands = list(templates.keys())
-            embeddings = [templates[hand].astype(np.float32) for hand in embedding_hands]
+            template_hands = list(templates.keys())
+            template_embeddings = [templates[hand].astype(np.float32) for hand in template_hands]
+            raw_embeddings = []
+            raw_embedding_hands = []
+            for hand in self.registration_session.hands:
+                for sample in samples:
+                    if sample["hand"] == hand:
+                        raw_embeddings.append(sample["embedding"].astype(np.float32))
+                        raw_embedding_hands.append(hand)
             avg_embedding = overall_template(templates)
 
             stored = self.db.get_all_embeddings()
-            for embedding in embeddings:
+            for embedding in template_embeddings:
                 duplicate = self.palm_processor.compute_similarity(embedding, stored, DUPLICATE_THRESHOLD)
                 if duplicate["status"] == "ALLOWED":
                     raise RuntimeError(f"This palm is already registered as '{duplicate['name']}'")
@@ -277,8 +313,8 @@ class DeviceRuntime:
                     self.registration_session.name,
                     avg_embedding,
                     nim=self.registration_session.nim,
-                    individual_embeddings=embeddings,
-                    embedding_hands=embedding_hands,
+                    individual_embeddings=raw_embeddings,
+                    embedding_hands=raw_embedding_hands,
                 )
             except ValueError as exc:
                 raise RuntimeError(str(exc)) from exc
@@ -291,8 +327,8 @@ class DeviceRuntime:
                 "user_id": user_id,
                 "nim": nim,
                 "name": name,
-                "stored_embeddings": len(embeddings),
-                "hands": {hand: embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
+                "stored_embeddings": len(raw_embeddings),
+                "hands": {hand: raw_embedding_hands.count(hand) for hand in REGISTRATION_HANDS},
             }
 
     def tick(self):
@@ -316,7 +352,8 @@ class DeviceRuntime:
                 if self.registration_session.last_guidance:
                     previous_metrics = self.registration_session.last_guidance.get("metrics")
                 metrics = self.palm_processor.get_registration_guidance_metrics(frame, previous_metrics)
-                sample_index = min(self.registration_session.current_sample_index, REGISTRATION_TOTAL_CAPTURES - 1)
+                total = self._registration_total_captures(self.registration_session.hands)
+                sample_index = min(self.registration_session.current_sample_index, total - 1)
                 target_index = self._target_index_for_sample_index(sample_index)
                 guidance = evaluate_guidance(target_index, metrics)
                 target = SAMPLE_TARGETS[target_index]
@@ -344,6 +381,16 @@ class DeviceRuntime:
         if not metrics.get("hand_detected", False):
             self.hand_seen_since_ms = None
             self.scan_state = {"stage": "waiting_for_hand", "metrics": metrics}
+            return None
+
+        quality_failures = scan_quality_failures(metrics)
+        if quality_failures:
+            self.hand_seen_since_ms = None
+            self.scan_state = {
+                "stage": "scan_quality_failed",
+                "metrics": metrics,
+                "failures": quality_failures,
+            }
             return None
 
         if self.hand_seen_since_ms is None:
@@ -400,6 +447,11 @@ class DeviceRuntime:
             last_inference_ms=0.0,
             last_recognition_at=self.last_recognition_at,
         )
+        if result.get("status") == "ALLOWED":
+            try:
+                self.lock_controller.unlock()
+            except Exception:
+                log.exception("Door unlock failed")
         return result
 
     def _run_preview_loop(self):
@@ -450,11 +502,19 @@ class DeviceRuntime:
         close = getattr(self.camera, "close", None)
         if callable(close):
             close()
+        close_lock = getattr(self.lock_controller, "close", None)
+        if callable(close_lock):
+            close_lock()
 
 
 def build_device_runtime(palm_processor, db):
     camera = OpenCVCameraSource(CAMERA_DEVICE_PATH)
-    return DeviceRuntime(camera=camera, palm_processor=palm_processor, db=db)
+    return DeviceRuntime(
+        camera=camera,
+        palm_processor=palm_processor,
+        db=db,
+        lock_controller=build_lock_controller(),
+    )
 
 
 if __name__ == "__main__":

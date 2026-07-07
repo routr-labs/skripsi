@@ -103,6 +103,45 @@ def test_start_device_registration_returns_session(monkeypatch):
     assert data["right_count"] == 0
 
 
+def test_start_device_registration_accepts_selected_hands(monkeypatch):
+    import app.main as main
+
+    class FakeRuntime:
+        def __init__(self):
+            self.started = None
+
+        def start_registration(self, nim, name, hands=None):
+            self.started = (nim, name, hands)
+
+        def get_registration_status(self):
+            return {
+                "active": True,
+                "worker_state": "registration_active",
+                "session_id": "session-1",
+                "nim": "12345",
+                "name": "Alice",
+                "current_sample_index": 0,
+                "captured_count": 0,
+                "guidance": None,
+                "required_per_hand": 5,
+                "total_required": 5,
+                "current_hand": "right",
+                "left_count": 0,
+                "right_count": 0,
+            }
+
+    runtime = FakeRuntime()
+    monkeypatch.setattr(main, "device_runtime", runtime)
+    client = TestClient(app)
+
+    response = client.post("/api/device-registration/start", json={"nim": "12345", "name": "Alice", "hands": ["right"]})
+
+    assert response.status_code == 200
+    assert runtime.started == ("12345", "Alice", ["right"])
+    assert response.json()["total_required"] == 5
+    assert response.json()["current_hand"] == "right"
+
+
 def test_device_registration_status_uses_runtime_status_method(monkeypatch):
     import app.main as main
 
@@ -161,7 +200,7 @@ def test_finalize_endpoint_returns_user(monkeypatch):
 
     class FakeRuntime:
         def finalize_registration(self):
-            return {"user_id": 10, "name": "Alice", "stored_embeddings": 2}
+            return {"user_id": 10, "name": "Alice", "stored_embeddings": 10}
 
     monkeypatch.setattr(main, "device_runtime", FakeRuntime())
     client = TestClient(app)
@@ -170,7 +209,7 @@ def test_finalize_endpoint_returns_user(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["user_id"] == 10
-    assert response.json()["stored_embeddings"] == 2
+    assert response.json()["stored_embeddings"] == 10
 
 
 def test_usb_preview_endpoint_returns_latest_frame(monkeypatch):

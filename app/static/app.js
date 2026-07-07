@@ -36,10 +36,12 @@ const state = {
   currentTab: 'scan',
   autoMode: true,
   usbDeviceMode: false,
+  devFeatures: false,
   usbScanEventSource: null,
   // Registration state
   registrationActive: false,
   registrationMode: 'camera',
+  selectedHands: ['left', 'right'],
   uploadBusy: false,
   registrationStatusTimer: null,
   capturedSamples: [],
@@ -66,6 +68,10 @@ const overlayCanvasReg = $('overlayCanvasReg');
 const btnScan          = $('btnScan');
 const btnMode          = $('btnMode');
 const btnRefresh       = $('btnRefresh');
+const scanUploadFile   = $('scanUploadFile');
+const scanUploadLabel  = $('scanUploadLabel');
+const roiPreview       = $('roiPreview');
+const roiPreviewImage  = $('roiPreviewImage');
 const userName         = $('userName');
 const userNim          = $('userNim');
 const usbRegistrationPreview = $('usbRegistrationPreview');
@@ -85,6 +91,11 @@ const uploadLeftList = $('uploadLeftList');
 const uploadRightList = $('uploadRightList');
 const btnUploadRegister = $('btnUploadRegister');
 const btnClearUploadFiles = $('btnClearUploadFiles');
+const registrationHandChips = document.querySelectorAll('[data-hand-toggle]');
+const registrationLeftCount = $('registrationLeftCount');
+const registrationRightCount = $('registrationRightCount');
+const uploadRegistrationLeftCount = $('uploadRegistrationLeftCount');
+const uploadRegistrationRightCount = $('uploadRegistrationRightCount');
 
 // ── MediaPipe init ───────────────────────────────────────────────
 let handLandmarker = null;
@@ -92,19 +103,19 @@ let drawUtils      = null;
 
 async function initMediaPipe() {
   try {
-    // Dynamic import to avoid blocking page load if CDN fails
-    const mediapipe = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    // Dynamic import to avoid blocking page load if local assets are missing
+    const mediapipe = await import('/static/vendor/mediapipe/vision_bundle.mjs');
     HandLandmarker = mediapipe.HandLandmarker;
     FilesetResolver = mediapipe.FilesetResolver;
     DrawingUtils = mediapipe.DrawingUtils;
 
     const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      '/static/vendor/mediapipe/wasm'
     );
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+          '/static/vendor/mediapipe/hand_landmarker.task',
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
@@ -399,8 +410,8 @@ function startUsbScanEvents() {
 }
 
 function captureFrame(videoEl) {
-  const w = videoEl.videoWidth  || 640;
-  const h = videoEl.videoHeight || 480;
+  const w = videoEl.videoWidth  || videoEl.naturalWidth  || 640;
+  const h = videoEl.videoHeight || videoEl.naturalHeight || 480;
   canvas.width  = w;
   canvas.height = h;
   canvas.getContext('2d').drawImage(videoEl, 0, 0, w, h);
@@ -459,6 +470,29 @@ btnScan.addEventListener('click', () => {
   if (!state.scanBusy) triggerScan();
 });
 
+async function submitRecognitionImage(b64) {
+  const scanStart = performance.now();
+  const res = await fetch('/api/recognize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: b64, is_roi: false, debug_roi: state.devFeatures }),
+  });
+  const elapsed = Math.round(performance.now() - scanStart);
+
+  if (res.status === 422) {
+    showNoHand('No hand detected — adjust position and try again');
+    return;
+  }
+  if (!res.ok) {
+    showNoHand('Server error — please try again');
+    return;
+  }
+
+  const data = await res.json();
+  showResult(data, elapsed);
+  updateStats(data.status);
+}
+
 async function triggerScan() {
   if (state.scanBusy) return;
   state.scanBusy = true;
@@ -468,27 +502,10 @@ async function triggerScan() {
   triggerFlash('captureFlash');
   showScanning();
 
-  const b64 = captureFrame(video);
-
-  const scanStart = performance.now();
-
   try {
-    const res = await fetch('/api/recognize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: b64, is_roi: false }),
-    });
-    const elapsed = Math.round(performance.now() - scanStart);
-
-    if (res.status === 422) {
-      showNoHand('No hand detected — adjust position and try again');
-    } else if (!res.ok) {
-      showNoHand('Server error — please try again');
-    } else {
-      const data = await res.json();
-      showResult(data, elapsed);
-      updateStats(data.status);
-    }
+    const scanSource = state.usbDeviceMode ? $('usbPreview') : video;
+    const b64 = captureFrame(scanSource);
+    await submitRecognitionImage(b64);
   } catch (err) {
     showNoHand('Network error');
     console.error(err);
@@ -498,7 +515,51 @@ async function triggerScan() {
   state.scanBusy = false;
 }
 
+async function handleScanUpload() {
+  const file = scanUploadFile?.files?.[0];
+  if (!file) return;
+  if (!state.devFeatures) {
+    scanUploadFile.value = '';
+    return;
+  }
+  if (state.scanBusy) {
+    scanUploadFile.value = '';
+    return;
+  }
+
+  state.scanBusy = true;
+  triggerFlash('captureFlash');
+  showScanning();
+
+  try {
+    const b64 = await fileToDataUrl(file);
+    await submitRecognitionImage(b64);
+  } catch (err) {
+    showNoHand('Could not read uploaded image');
+    console.error(err);
+  } finally {
+    scanUploadFile.value = '';
+    state.scanCooldownUntil = Date.now() + SCAN_COOLDOWN_MS;
+    state.scanBusy = false;
+  }
+}
+
+function clearRoiPreview() {
+  if (roiPreview) roiPreview.hidden = true;
+  if (roiPreviewImage) roiPreviewImage.removeAttribute('src');
+}
+
+function updateRoiPreview(data) {
+  if (!state.devFeatures || !data?.roi_image || !roiPreview || !roiPreviewImage) {
+    clearRoiPreview();
+    return;
+  }
+  roiPreviewImage.src = data.roi_image;
+  roiPreview.hidden = false;
+}
+
 function showScanning() {
+  clearRoiPreview();
   $('resultDisplay').style.display  = 'none';
   $('resultIdle').style.display     = 'none';
   $('resultScanning').style.display = 'flex';
@@ -506,6 +567,7 @@ function showScanning() {
 }
 
 function showNoHand(msg) {
+  clearRoiPreview();
   $('resultScanning').style.display = 'none';
   $('resultDisplay').style.display  = 'none';
   $('resultIdle').style.display     = 'flex';
@@ -547,6 +609,7 @@ function showResult(data, elapsedMs) {
   } else {
     timingRow.style.display = 'none';
   }
+  updateRoiPreview(data);
 }
 
 function updateStats(status) {
@@ -568,14 +631,31 @@ const SAMPLE_TARGETS = [
   { key: 'rotate_right', label: 'Rotate right', minHeight: 0.50, maxHeight: 0.60, minRot: 8, maxRot: 15, minCx: 0.40, maxCx: 0.60 },
 ];
 
+function selectedRegistrationHands() {
+  return REGISTRATION_HANDS.filter((hand) => state.selectedHands.includes(hand));
+}
+
+function handLabel(hand) {
+  return hand[0].toUpperCase() + hand.slice(1);
+}
+
+function selectedHandsText() {
+  return selectedRegistrationHands().map(handLabel).join(' and ');
+}
+
+function getCurrentRegistrationSequence() {
+  return selectedRegistrationHands().flatMap((hand) => Array(REGISTRATION_CAPTURES_PER_HAND).fill(hand));
+}
+
 function getCurrentRegistrationHand() {
-  const index = Math.min(state.currentSampleIndex, REGISTRATION_TOTAL_CAPTURES - 1);
-  return REGISTRATION_HANDS[Math.floor(index / REGISTRATION_CAPTURES_PER_HAND)];
+  const sequence = getCurrentRegistrationSequence();
+  const index = Math.min(state.currentSampleIndex, sequence.length - 1);
+  return sequence[index] || selectedRegistrationHands()[0] || 'left';
 }
 
 function getCurrentPoseIndex() {
-  const currentSampleIndex = Math.min(state.currentSampleIndex, REGISTRATION_TOTAL_CAPTURES - 1);
-  return currentSampleIndex % SAMPLE_TARGETS.length;
+  const currentSampleIndex = Math.min(state.currentSampleIndex, getCurrentRegistrationSequence().length - 1);
+  return ((currentSampleIndex % REGISTRATION_CAPTURES_PER_HAND) + REGISTRATION_CAPTURES_PER_HAND) % REGISTRATION_CAPTURES_PER_HAND;
 }
 
 function getRegistrationCounts() {
@@ -587,17 +667,30 @@ function getRegistrationCounts() {
 }
 
 function isRegistrationComplete() {
-  const { left: leftCount, right: rightCount } = getRegistrationCounts();
-  return leftCount === REGISTRATION_CAPTURES_PER_HAND && rightCount === REGISTRATION_CAPTURES_PER_HAND;
+  const counts = getRegistrationCounts();
+  return selectedRegistrationHands().every((hand) => counts[hand] === REGISTRATION_CAPTURES_PER_HAND);
+}
+
+function toggleRegistrationHand(hand) {
+  if (state.registrationActive || state.uploadBusy) return;
+  const selected = selectedRegistrationHands();
+  if (state.selectedHands.includes(hand)) {
+    if (selected.length === 1) return setFeedback('Select at least one hand to register', 'error');
+    state.selectedHands = state.selectedHands.filter((item) => item !== hand);
+  } else {
+    state.selectedHands = REGISTRATION_HANDS.filter((item) => item === hand || state.selectedHands.includes(item));
+  }
+  clearUploadRegistration(false);
+  updateRegistrationUI();
+  updateUploadRegistrationUI();
 }
 
 function getCurrentSamplePrompt() {
   const hand = getCurrentRegistrationHand();
   const poseIndex = getCurrentPoseIndex();
   const pose = REGISTRATION_POSES[poseIndex];
-  const handLabel = hand[0].toUpperCase() + hand.slice(1);
   return {
-    title: `${handLabel} hand sample ${poseIndex + 1}/${REGISTRATION_CAPTURES_PER_HAND}: ${pose.label}`,
+    title: `${handLabel(hand)} hand sample ${poseIndex + 1}/${REGISTRATION_CAPTURES_PER_HAND}: ${pose.label}`,
     desc: `Use your actual ${hand} hand. ${pose.desc} Keep the inside palm facing the camera.`,
   };
 }
@@ -617,7 +710,7 @@ btnStartRegistration?.addEventListener('click', async () => {
   state.capturedSamples = [];
   state.registrationCounts = { left: 0, right: 0 };
   state.currentSampleIndex = 0;
-  setFeedback('Registration started. Capture 5 left-hand and 5 right-hand samples.', 'success');
+  setFeedback(`Registration started. Capture 5 samples for ${selectedHandsText()}.`, 'success');
   startRegistrationStatusPolling();
   updateRegistrationUI();
 });
@@ -673,7 +766,7 @@ async function apiStartRegistration(nim, name) {
   const res = await fetch('/api/device-registration/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nim, name }),
+    body: JSON.stringify({ nim, name, hands: state.selectedHands }),
   });
   return await res.json();
 }
@@ -795,7 +888,7 @@ function evaluateBrowserGuidance(metrics) {
 
 // ── Browser registration fallback ─────────────────────────────────
 function captureBrowserSample() {
-  if (state.capturedSamples.length >= REGISTRATION_TOTAL_CAPTURES) return;
+  if (state.capturedSamples.length >= getCurrentRegistrationSequence().length) return;
   if (!state.lastGuidance?.acceptable) {
     setFeedback('Adjust hand position before capturing', 'error');
     return;
@@ -816,8 +909,8 @@ function captureBrowserSample() {
 async function finalizeBrowserRegistration() {
   const nim = userNim.value.trim();
   const name = userName.value.trim();
-  const { left: leftCount, right: rightCount } = getRegistrationCounts();
-  if (!nim || !name || !(leftCount === REGISTRATION_CAPTURES_PER_HAND && rightCount === REGISTRATION_CAPTURES_PER_HAND)) return;
+  const counts = getRegistrationCounts();
+  if (!nim || !name || !selectedRegistrationHands().every((hand) => counts[hand] === REGISTRATION_CAPTURES_PER_HAND)) return;
 
   setFeedback('Registering…', '');
 
@@ -851,21 +944,30 @@ function updateRegistrationUI() {
 
   const sampleTitle = $('regSampleTitle');
   const sampleDesc = $('regSampleDesc');
-  const captureCounter = $('captureCounter');
 
   if (sampleTitle) sampleTitle.textContent = sample.title;
   if (sampleDesc) sampleDesc.textContent = sample.desc;
-  if (captureCounter) {
-    captureCounter.textContent = `Left ${leftCount}/${REGISTRATION_CAPTURES_PER_HAND} · Right ${rightCount}/${REGISTRATION_CAPTURES_PER_HAND}`;
-  }
+  if (registrationLeftCount) registrationLeftCount.textContent = `${leftCount}/${REGISTRATION_CAPTURES_PER_HAND}`;
+  if (registrationRightCount) registrationRightCount.textContent = `${rightCount}/${REGISTRATION_CAPTURES_PER_HAND}`;
 
+  registrationHandChips.forEach((chip) => {
+    const hand = chip.dataset.handToggle;
+    const selected = state.selectedHands.includes(hand);
+    chip.classList.toggle('active', selected);
+    chip.disabled = state.registrationActive || state.uploadBusy || (selected && selectedRegistrationHands().length === 1);
+    chip.setAttribute('aria-pressed', String(selected));
+  });
+
+  document.querySelectorAll('#captureDots .capture-dot-group').forEach((group) => {
+    group.classList.toggle('muted', !state.selectedHands.includes(group.dataset.hand));
+  });
   document.querySelectorAll('#captureDots .dot').forEach((dot) => {
     const hand = dot.dataset.hand;
     const i = Number(dot.dataset.i || 0);
     dot.classList.toggle('filled', i < (hand === 'left' ? leftCount : rightCount));
   });
 
-  renderQualityList(state.lastGuidance);
+  renderQualityLine(state.lastGuidance);
 
   const active = state.registrationActive;
   const busy = state.uploadBusy;
@@ -882,47 +984,45 @@ function updateRegistrationUI() {
   if (btnCancelRegistration) btnCancelRegistration.disabled = !active || busy;
 }
 
-function renderQualityList(guidance) {
-  const list = $('qualityList');
-  if (!list) return;
+function renderQualityLine(guidance) {
+  const line = $('registrationQualityLine');
+  if (!line) return;
 
   if (!state.registrationActive) {
-    list.innerHTML = '<li><span>Status</span><strong class="neutral">Enter NIM and name to start</strong></li>';
+    line.textContent = 'Enter NIM and name to start.';
+    line.className = 'registration-quality-line neutral';
     return;
   }
   if (!guidance) {
-    list.innerHTML = '<li><span>Status</span><strong class="bad">Waiting for hand</strong></li>';
+    line.textContent = 'Waiting for hand.';
+    line.className = 'registration-quality-line bad';
     return;
   }
-  const failures = new Set(guidance.failures || []);
-  const blockers = new Set(guidance.blockers || []);
-  const rows = [
-    ['hand', 'Hand detected', 'Required'],
-    ['brightness', 'Lighting', 'Required'],
-    ['sharpness', 'Sharpness', 'Required'],
-    ['clipping', 'Full hand visible', 'Guide'],
-    ['size', 'Target size', 'Guide'],
-    ['rotation', 'Target rotation', 'Guide'],
-    ['position', 'Target position', 'Guide'],
-    ['steady', 'Steady frame', 'Guide'],
-  ];
-  list.innerHTML = rows.map(([key, label, type]) => {
-    const ok = !failures.has(key);
-    const blocking = blockers.has(key);
-    const status = ok ? 'OK' : (blocking ? 'Fix' : 'Adjust');
-    const cls = ok ? 'ok' : (blocking ? 'bad' : 'warn');
-    let detail = '';
-    if (key === 'sharpness' && guidance.metrics?.blur_score != null) {
-      detail = ` (${guidance.metrics.blur_score.toFixed(0)})`;
-    } else if (key === 'brightness' && guidance.metrics?.brightness != null) {
-      detail = ` (${guidance.metrics.brightness.toFixed(0)})`;
-    }
-    return `<li><span>${label}${detail} <em>${type}</em></span><strong class="${cls}">${status}</strong></li>`;
-  }).join('');
+  const blockers = guidance.blockers || [];
+  const failures = guidance.failures || [];
+  if (!blockers.length && !failures.length) {
+    line.textContent = 'Ready to capture.';
+    line.className = 'registration-quality-line ok';
+    return;
+  }
+  const first = blockers[0] || failures[0];
+  const messages = {
+    hand: 'Show your full palm to the camera.',
+    brightness: 'Improve lighting.',
+    sharpness: 'Hold still for a sharper frame.',
+    clipping: 'Keep the full hand visible.',
+    size: 'Match the target size.',
+    rotation: 'Match the target rotation.',
+    position: 'Center your palm.',
+    steady: 'Hold steady.',
+  };
+  line.textContent = messages[first] || 'Adjust hand position.';
+  line.className = `registration-quality-line ${blockers.length ? 'bad' : 'warn'}`;
 }
 
 function setRegistrationMode(mode) {
   if (!['camera', 'upload'].includes(mode)) return;
+  if (mode === 'upload' && !state.devFeatures) return;
   if (state.registrationActive || state.uploadBusy) return;
   state.registrationMode = mode;
 
@@ -953,32 +1053,42 @@ function uploadFileSummary(input) {
   return files.length > 3 ? `${names}, +${files.length - 3} more` : names;
 }
 
-function paintUploadPicker(input, picker, countEl, listEl) {
+function uploadInputForHand(hand) {
+  return hand === 'left' ? uploadLeftFiles : uploadRightFiles;
+}
+
+function uploadHandCountText(hand) {
+  if (!state.selectedHands.includes(hand)) return 'Off';
+  return `${uploadInputForHand(hand).files.length}/${REGISTRATION_CAPTURES_PER_HAND}`;
+}
+
+function paintUploadPicker(input, picker, countEl, listEl, selected = true) {
   if (!input || !picker || !countEl || !listEl) return;
   const count = input.files.length;
-  countEl.textContent = `${count}/${REGISTRATION_CAPTURES_PER_HAND}`;
-  listEl.textContent = uploadFileSummary(input);
-  picker.classList.toggle('ok', count === REGISTRATION_CAPTURES_PER_HAND);
-  picker.classList.toggle('bad', count > 0 && count !== REGISTRATION_CAPTURES_PER_HAND);
+  input.disabled = !selected;
+  countEl.textContent = selected ? `${count}/${REGISTRATION_CAPTURES_PER_HAND}` : 'Off';
+  listEl.textContent = selected ? uploadFileSummary(input) : 'Hand not selected.';
+  picker.classList.toggle('disabled', !selected);
+  picker.classList.toggle('ok', selected && count === REGISTRATION_CAPTURES_PER_HAND);
+  picker.classList.toggle('bad', selected && count > 0 && count !== REGISTRATION_CAPTURES_PER_HAND);
 }
 
 function uploadSelectionComplete() {
-  return uploadLeftFiles.files.length === REGISTRATION_CAPTURES_PER_HAND && uploadRightFiles.files.length === REGISTRATION_CAPTURES_PER_HAND;
+  return selectedRegistrationHands().every((hand) => uploadInputForHand(hand).files.length === REGISTRATION_CAPTURES_PER_HAND);
 }
 
 function updateUploadRegistrationUI() {
-  paintUploadPicker(uploadLeftFiles, uploadLeftPicker, uploadLeftCount, uploadLeftList);
-  paintUploadPicker(uploadRightFiles, uploadRightPicker, uploadRightCount, uploadRightList);
+  paintUploadPicker(uploadLeftFiles, uploadLeftPicker, uploadLeftCount, uploadLeftList, state.selectedHands.includes('left'));
+  paintUploadPicker(uploadRightFiles, uploadRightPicker, uploadRightCount, uploadRightList, state.selectedHands.includes('right'));
+  if (uploadRegistrationLeftCount) uploadRegistrationLeftCount.textContent = uploadHandCountText('left');
+  if (uploadRegistrationRightCount) uploadRegistrationRightCount.textContent = uploadHandCountText('right');
 
-  const hasNim = userNim?.value?.trim()?.length > 0;
-  const hasName = userName?.value?.trim()?.length > 0;
   if (btnUploadRegister) {
     btnUploadRegister.disabled = (
       state.registrationMode !== 'upload'
       || state.registrationActive
       || state.uploadBusy
-      || !hasNim
-      || !hasName
+      || !state.devFeatures
       || !uploadSelectionComplete()
     );
   }
@@ -1005,7 +1115,7 @@ async function finalizeUploadRegistration() {
   if (!nim) return setFeedback('NIM is required', 'error');
   if (!name) return setFeedback('Name is required', 'error');
   if (!uploadSelectionComplete()) {
-    return setFeedback('Upload exactly 5 left-hand and 5 right-hand photos.', 'error');
+    return setFeedback('Upload exactly 5 photos for each selected hand.', 'error');
   }
 
   state.uploadBusy = true;
@@ -1013,10 +1123,13 @@ async function finalizeUploadRegistration() {
   setFeedback('Reading uploaded images…', '');
 
   try {
-    const [leftImages, rightImages] = await Promise.all([
-      Promise.all(uploadFiles(uploadLeftFiles).map(fileToDataUrl)),
-      Promise.all(uploadFiles(uploadRightFiles).map(fileToDataUrl)),
-    ]);
+    const uploadImages = [];
+    const uploadHands = [];
+    for (const hand of selectedRegistrationHands()) {
+      const images = await Promise.all(uploadFiles(uploadInputForHand(hand)).map(fileToDataUrl));
+      uploadImages.push(...images);
+      uploadHands.push(...Array(images.length).fill(hand));
+    }
 
     setFeedback('Registering uploaded palms…', '');
     const res = await fetch('/api/register', {
@@ -1025,8 +1138,9 @@ async function finalizeUploadRegistration() {
       body: JSON.stringify({
         nim,
         name,
-        images: [...leftImages, ...rightImages],
-        hands: [...Array(REGISTRATION_CAPTURES_PER_HAND).fill('left'), ...Array(REGISTRATION_CAPTURES_PER_HAND).fill('right')],
+        images: uploadImages,
+        hands: uploadHands,
+        source: 'upload',
         is_roi: false,
       }),
     });
@@ -1057,6 +1171,7 @@ function resetRegistration() {
   state.capturedSamples = [];
   state.registrationCounts = { left: 0, right: 0 };
   state.currentSampleIndex = 0;
+  state.selectedHands = ['left', 'right'];
   state.lastGuidance = null;
   stopRegistrationStatusPolling();
   clearUploadRegistration(false);
@@ -1104,7 +1219,7 @@ function updateHandGuideOverlay(metrics) {
   overlay.style.opacity = '1';
   if (palmGuide) palmGuide.style.opacity = '0';
 
-  const target = SAMPLE_TARGETS[Math.min(state.currentSampleIndex, SAMPLE_TARGETS.length - 1)];
+  const target = SAMPLE_TARGETS[getCurrentPoseIndex()];
 
   // Size indicator
   const sizeOk = target.minHeight <= metrics.height_ratio && metrics.height_ratio <= target.maxHeight;
@@ -1182,8 +1297,13 @@ registrationModeTabs.forEach((tab) => {
   tab.addEventListener('click', () => setRegistrationMode(tab.dataset.registrationMode));
 });
 
+registrationHandChips.forEach((chip) => {
+  chip.addEventListener('click', () => toggleRegistrationHand(chip.dataset.handToggle));
+});
+
 uploadLeftFiles?.addEventListener('change', updateUploadRegistrationUI);
 uploadRightFiles?.addEventListener('change', updateUploadRegistrationUI);
+scanUploadFile?.addEventListener('change', handleScanUpload);
 btnUploadRegister?.addEventListener('click', finalizeUploadRegistration);
 btnClearUploadFiles?.addEventListener('click', () => clearUploadRegistration());
 
@@ -1265,20 +1385,25 @@ async function loadUsers() {
 }
 
 function renderUsers(users) {
-  const grid = $('usersGrid');
+  let tableBody = $('usersTableBody');
+  const legacyGrid = $('usersGrid');
+  if (!tableBody && legacyGrid) {
+    legacyGrid.className = 'users-table-wrap';
+    legacyGrid.innerHTML = '<table class="users-table"><thead><tr><th>NIM</th><th>Name</th><th>Registered</th><th>Actions</th></tr></thead><tbody id="usersTableBody"></tbody></table>';
+    tableBody = $('usersTableBody');
+  }
+  if (!tableBody) return;
   if (!users.length) {
-    grid.innerHTML = '<div class="users-empty">No users enrolled yet.</div>';
+    tableBody.innerHTML = '<tr class="users-empty-row"><td colspan="4"><div class="users-empty">No users enrolled yet.</div></td></tr>';
     return;
   }
-  grid.innerHTML = users.map((u) => `
-    <div class="user-chip" id="chip-${u.id}">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" stroke-width="1.2"/>
-        <path d="M2 13c0-2.761 2.239-4 5-4s5 1.239 5 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-      </svg>
-      <span class="user-chip-name">${esc(u.nim)} — ${esc(u.name)}</span>
-      <button class="user-chip-delete" onclick="window.deleteUser(${u.id})" title="Remove">×</button>
-    </div>`).join('');
+  tableBody.innerHTML = users.map((u) => `
+    <tr id="user-${u.id}">
+      <td>${esc(u.nim)}</td>
+      <td>${esc(u.name)}</td>
+      <td>${esc(u.created_at || '—')}</td>
+      <td><div class="user-table-actions"><button class="user-action-btn danger" onclick="window.deleteUser(${u.id})" title="Remove">Delete</button></div></td>
+    </tr>`).join('');
 }
 
 window.deleteUser = async (id) => {
@@ -1295,11 +1420,26 @@ async function loadStats() {
   } catch (_) { /* silent */ }
 }
 
+function updateDevFeatures() {
+  document.querySelectorAll('.dev-only').forEach((el) => {
+    if (el === roiPreview && state.devFeatures) return;
+    el.hidden = !state.devFeatures;
+  });
+  scanUploadLabel?.setAttribute('aria-disabled', String(!state.devFeatures));
+  if (!state.devFeatures && state.registrationMode === 'upload') {
+    setRegistrationMode('camera');
+  }
+  if (!state.devFeatures) clearRoiPreview();
+}
+
 async function loadStatus() {
   try {
     const data = await fetch('/api/status').then((r) => r.json());
     const device = data.device || {};
     state.usbDeviceMode = data.app?.camera_source === 'usb' && data.app?.device_runtime_enabled === true;
+    state.devFeatures = data.app?.dev_features === true;
+    $('appVersion').textContent = data.app?.version ?? 'local';
+    updateDevFeatures();
     const workerState = device.worker_state ?? 'disabled';
     const cameraConnected = !!device.camera_connected;
 
@@ -1342,7 +1482,6 @@ const esc = (s) =>
       // USB mode: use MJPEG stream for both scan and registration
       startUsbPreview();
       startUsbScanEvents();
-      setAutoMode(false);
       // Show USB preview in registration, hide browser video
       if (videoReg) videoReg.style.display = 'none';
       if (usbRegistrationPreview) {

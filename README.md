@@ -10,6 +10,7 @@ Web-based palmprint recognition app that now supports two operating modes:
 - `models/embedding_new_roi_v2/model.tflite` by default, or set `MODEL_VERSION=<version>` for `models/<version>/model.tflite`
 - `model_metadata.json` next to the selected model if available
 - `hand_landmarker.task` in the project root
+- Browser MediaPipe assets in `app/static/vendor/mediapipe/` for offline browser hand detection
 
 ## Setup
 
@@ -27,6 +28,34 @@ urllib.request.urlretrieve(
 )
 ```
 
+Browser hand detection does not load MediaPipe or fonts from a CDN at runtime. The browser assets are vendored under `app/static/vendor/mediapipe/` and copied into the React build by `frontend/scripts/sync-static-vendor.mjs`.
+
+To refresh those browser assets while online:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+from urllib.request import urlretrieve
+
+root = Path('app/static/vendor/mediapipe')
+files = {
+    'vision_bundle.mjs': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs',
+    'wasm/vision_wasm_internal.js': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_internal.js',
+    'wasm/vision_wasm_internal.wasm': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_internal.wasm',
+    'wasm/vision_wasm_nosimd_internal.js': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_nosimd_internal.js',
+    'wasm/vision_wasm_nosimd_internal.wasm': 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/vision_wasm_nosimd_internal.wasm',
+    'hand_landmarker.task': 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+}
+
+for relative_path, url in files.items():
+    target = root / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    urlretrieve(url, target)
+    print(target)
+PY
+cd frontend && bun run sync:static-vendor
+```
+
 ## Run locally
 
 ```bash
@@ -37,12 +66,23 @@ Open: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
 ## Run with Docker
 
-Docker Compose reads `.env`, not `.env.example`. The example defaults to the USB profile:
+Docker Compose reads `.env`, not `.env.example`. The example defaults to the USB profile and pulls the prebuilt GHCR image:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose pull
+docker compose up -d
 ```
+
+To update the Orange Pi after pushing new code:
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+The running build SHA is shown in the dashboard status card and in `/api/status` as `app.version`.
 
 ## Current features
 

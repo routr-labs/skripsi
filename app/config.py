@@ -26,7 +26,8 @@ def _load_env_file(path: Path) -> None:
             os.environ[key] = value.strip().strip('"').strip("'")
 
 
-_load_env_file(BASE_DIR / ".env")
+if os.getenv("PALMGATE_SKIP_DOTENV", "0") != "1":
+    _load_env_file(BASE_DIR / ".env")
 
 DEFAULT_MODEL_VERSION = "embedding_new_roi_v2"
 DEFAULT_MODEL_DIR = BASE_DIR / "models" / "embedding"
@@ -62,6 +63,12 @@ MODEL_METADATA = _load_model_metadata()
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
+APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
+if APP_ENV not in {"development", "production"}:
+    APP_ENV = "production"
+DEV_FEATURES_ENABLED = APP_ENV == "development"
+PALMGATE_VERSION = os.getenv("PALMGATE_VERSION", "local").strip() or "local"
+
 # DB_PATH can be overridden via environment variable for Docker deployments
 # e.g. DB_PATH=/data/palmprint.db → mount a named volume at /data
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "palmprint.db")))
@@ -74,6 +81,11 @@ DEVICE_PREVIEW_FRAME_INTERVAL_MS = int(os.getenv("DEVICE_PREVIEW_FRAME_INTERVAL_
 DEVICE_HOLD_MS = int(os.getenv("DEVICE_HOLD_MS", "1200"))
 DEVICE_COOLDOWN_MS = int(os.getenv("DEVICE_COOLDOWN_MS", "3000"))
 DEVICE_STATUS_HEARTBEAT_MS = int(os.getenv("DEVICE_STATUS_HEARTBEAT_MS", "1000"))
+LOCK_GPIO_ENABLED = os.getenv("LOCK_GPIO_ENABLED", "0") == "1"
+LOCK_GPIO_CHIP = os.getenv("LOCK_GPIO_CHIP", "/dev/gpiochip0")
+LOCK_GPIO_LINE = os.getenv("LOCK_GPIO_LINE", "75")
+LOCK_ACTIVE_LOW = os.getenv("LOCK_ACTIVE_LOW", "1") == "1"
+LOCK_UNLOCK_MS = int(os.getenv("LOCK_UNLOCK_MS", "2000"))
 NOTEBOOK_REMBG_ENABLED = os.getenv("NOTEBOOK_REMBG_ENABLED", "1") == "1"
 NOTEBOOK_REMBG_MODEL = os.getenv("NOTEBOOK_REMBG_MODEL", "u2net")
 
@@ -92,7 +104,7 @@ RECOGNITION_TTA_ENABLED = os.getenv("RECOGNITION_TTA_ENABLED", "0") == "1"
 REGISTRATION_HANDS = ("left", "right")
 REGISTRATION_CAPTURES_PER_HAND = 5
 REGISTRATION_TOTAL_CAPTURES = REGISTRATION_CAPTURES_PER_HAND * len(REGISTRATION_HANDS)
-REGISTRATION_STORE_EMBEDDINGS_PER_HAND = 1
+REGISTRATION_STORE_EMBEDDINGS_PER_HAND = REGISTRATION_CAPTURES_PER_HAND
 REGISTRATION_MIN_VALID_PER_HAND = 5
 REGISTRATION_CAPTURES = REGISTRATION_TOTAL_CAPTURES
 USB_REGISTRATION_CAPTURES = REGISTRATION_TOTAL_CAPTURES

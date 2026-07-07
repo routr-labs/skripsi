@@ -20,17 +20,23 @@ __pycache__
 venv
 env
 
+# Frontend local artifacts
+frontend/node_modules
+frontend/.output
+frontend/.nitro
+frontend/dist
+
 # Local database (container uses a named volume)
 *.db
 
 # Jupyter notebooks
 *.ipynb
 
-# Tests and docs (not needed in the image)
+# Tests and docs (not needed in the backend image)
 tests/
 docs/
 
-# Docker files (no need to recurse)
+# Docker files (no need to recurse into backend image)
 Dockerfile
 docker-compose.yml
 .dockerignore

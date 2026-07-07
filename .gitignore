@@ -32,6 +32,8 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Database (runtime data, not source)
+palmprint.db
+*.db.bak
 *.sqlite
 *.sqlite3
 
@@ -43,6 +45,12 @@ htmlcov/
 *.onnx
 *.pt
 *.pth
+
+# Vendored browser runtime assets
+!app/static/vendor/
+!app/static/vendor/**/
+!app/static/vendor/mediapipe/hand_landmarker.task
+frontend/public/static/vendor/
 
 # Docker
 *.log
@@ -59,7 +67,10 @@ desktop.ini
 
 # Unnecessary / local things
 .superpowers/
+data/
+*/data/
 docs/
 designs/
 Dataset*/
 seeds/
+test_script.py

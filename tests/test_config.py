@@ -2,6 +2,13 @@ import importlib
 import os
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def skip_project_dotenv(monkeypatch):
+    monkeypatch.setenv("PALMGATE_SKIP_DOTENV", "1")
+
 
 def test_device_runtime_env_overrides(monkeypatch):
     monkeypatch.setenv("DEVICE_RUNTIME_ENABLED", "1")
@@ -36,12 +43,31 @@ def test_notebook_rembg_env_override(monkeypatch):
     assert config.NOTEBOOK_REMBG_ENABLED is False
 
 
+def test_lock_gpio_env_defaults_and_overrides(monkeypatch):
+    monkeypatch.setenv("LOCK_GPIO_ENABLED", "1")
+    monkeypatch.setenv("LOCK_GPIO_CHIP", "/dev/gpiochip2")
+    monkeypatch.setenv("LOCK_GPIO_LINE", "42")
+    monkeypatch.setenv("LOCK_ACTIVE_LOW", "0")
+    monkeypatch.setenv("LOCK_UNLOCK_MS", "2500")
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.LOCK_GPIO_ENABLED is True
+    assert config.LOCK_GPIO_CHIP == "/dev/gpiochip2"
+    assert config.LOCK_GPIO_LINE == "42"
+    assert config.LOCK_ACTIVE_LOW is False
+    assert config.LOCK_UNLOCK_MS == 2500
+
+
 def test_embedding_model_defaults(monkeypatch):
     monkeypatch.delenv("MODEL_PATH", raising=False)
     monkeypatch.delenv("MODEL_VERSION", raising=False)
     monkeypatch.delenv("MODEL_METADATA_PATH", raising=False)
     monkeypatch.delenv("SIMILARITY_THRESHOLD", raising=False)
     monkeypatch.delenv("EMBEDDING_DIM", raising=False)
+    monkeypatch.delenv("ENROLLMENT_TTA_ENABLED", raising=False)
+    monkeypatch.delenv("RECOGNITION_TTA_ENABLED", raising=False)
 
     import app.config as config
     importlib.reload(config)
@@ -140,3 +166,33 @@ def test_model_metadata_overrides_threshold_and_dim(tmp_path, monkeypatch):
     assert config.EMBEDDING_DIM == 64
     assert config.SIMILARITY_THRESHOLD == 0.8123
     assert config.TTA_ROTATIONS == (0.0, -3.0, 3.0)
+
+
+def test_app_env_defaults_to_production(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "production"
+    assert config.DEV_FEATURES_ENABLED is False
+
+
+def test_app_env_development_enables_dev_features(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "development"
+    assert config.DEV_FEATURES_ENABLED is True
+
+
+def test_invalid_app_env_falls_back_to_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "local")
+
+    import app.config as config
+    importlib.reload(config)
+
+    assert config.APP_ENV == "production"
+    assert config.DEV_FEATURES_ENABLED is False
