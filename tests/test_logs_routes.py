@@ -76,6 +76,18 @@ def test_logs_reject_invalid_status(monkeypatch):
     assert "status must be ALLOWED or DENIED" in response.json()["detail"]
 
 
+def test_logs_reject_invalid_date_filters(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "db", FakeLogsDB())
+    client = TestClient(app)
+
+    response = client.get("/api/logs?start_date=not-a-date")
+
+    assert response.status_code == 400
+    assert "start_date must use YYYY-MM-DD" in response.json()["detail"]
+
+
 def test_logs_export_csv(monkeypatch):
     import app.main as main
 
@@ -91,3 +103,18 @@ def test_logs_export_csv(monkeypatch):
     assert "id,timestamp,status,matched_name,current_nim,similarity,duration_ms,description" in response.text
     assert "1,2026-07-05 10:00:00,ALLOWED,Alice,A001,0.95,12,front door" in response.text
     assert fake_db.list_calls[0]["limit"] is None
+
+
+def test_logs_export_csv_neutralizes_spreadsheet_formulas(monkeypatch):
+    import app.main as main
+
+    fake_db = FakeLogsDB()
+    fake_db.rows = [{**fake_db.rows[0], "matched_name": "=cmd", "description": "+SUM(1,1)"}]
+    monkeypatch.setattr(main, "db", fake_db)
+    client = TestClient(app)
+
+    response = client.get("/api/logs/export.csv")
+
+    assert response.status_code == 200
+    assert "'=cmd" in response.text
+    assert "'+SUM(1,1)" in response.text

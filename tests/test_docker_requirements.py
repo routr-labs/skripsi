@@ -24,6 +24,7 @@ def test_dockerfile_uses_uv_for_python_dependencies():
     dockerfile = Path("Dockerfile").read_text()
 
     assert "COPY --from=ghcr.io/astral-sh/uv:" in dockerfile
+    assert "COPY --from=ghcr.io/astral-sh/uv:latest" not in dockerfile
     assert "uv pip install --system --no-cache-dir -r requirements.docker.txt" in dockerfile
     assert "RUN pip install --no-cache-dir -r requirements.docker.txt" not in dockerfile
 
@@ -134,4 +135,4 @@ def test_github_actions_publishes_ghcr_image_with_version_arg():
     assert "docker/build-push-action@v6" in workflow
     assert "platforms: linux/amd64,linux/arm64" in workflow
     assert "packages: write" in workflow
-    assert "feat/admin-dashboard" in workflow
+    assert "- master" in workflow

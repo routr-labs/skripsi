@@ -169,7 +169,7 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
   useEffect(() => {
     if (!active || !usbDeviceMode) return
     const id = window.setInterval(() => {
-      void refreshUsbStatus()
+      void refreshUsbStatus().catch(() => {})
     }, 1000)
     return () => window.clearInterval(id)
   }, [active, usbDeviceMode])
@@ -271,9 +271,14 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
   }
 
   async function refreshUsbStatus() {
-    const next = await apiJson<DeviceRegistrationStatus>('/api/device-registration/status')
-    setStatus(next)
-    setMessage(`USB captured ${next.captured_count ?? 0} / ${next.total_required ?? selectedHands.length * REGISTRATION_CAPTURES_PER_HAND}.`)
+    try {
+      const next = await apiJson<DeviceRegistrationStatus>('/api/device-registration/status')
+      setStatus(next)
+      setMessage(`USB captured ${next.captured_count ?? 0} / ${next.total_required ?? selectedHands.length * REGISTRATION_CAPTURES_PER_HAND}.`)
+    } catch (err) {
+      setError(err instanceof Error ? `USB status refresh failed: ${err.message}` : 'USB status refresh failed')
+      throw err
+    }
   }
 
   async function captureUsbSample() {
@@ -308,6 +313,8 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
   async function cancelUsbRegistration() {
     try {
       await apiJson('/api/device-registration/cancel', { method: 'POST' })
+    } catch (err) {
+      setError(err instanceof Error ? `Cancel failed: ${err.message}` : 'Cancel failed')
     } finally {
       setActive(false)
       setStatus(null)
@@ -372,6 +379,8 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
   const sampleDesc = current ? `Use your actual ${current} hand: palm facing camera, fingers up, wrist visible.` : 'Finalize registration to save this user.'
   const uploadLeftCount = Array.from(uploadFiles.left ?? []).length
   const uploadRightCount = Array.from(uploadFiles.right ?? []).length
+  const handToggleLocked = active || registrationBusy
+  const registrationQualityClass = error ? 'bad' : registrationQualityLine.includes('Palm detected') ? 'ok' : active ? 'warn' : 'neutral'
 
   return (
     <section className={`panel${panelActive ? ' active' : ''}`} id="panel-register">
@@ -441,8 +450,8 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
             <div className={`registration-mode-panel${registrationMode === 'camera' ? ' active' : ''}`} id="cameraRegistrationPanel" data-registration-mode-panel="camera" role="tabpanel" aria-labelledby="cameraRegistrationTab">
               <div className="registration-status" id="registrationStatus">
                 <div className="registration-hand-select" aria-label="Hands to register">
-                  <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="registrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} onClick={() => toggleHand('left')}>Left <span id="registrationLeftCount">{leftCount}/5</span></button>
-                  <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="registrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} onClick={() => toggleHand('right')}>Right <span id="registrationRightCount">{rightCount}/5</span></button>
+                  <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="registrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} disabled={handToggleLocked || (selectedHands.includes('left') && selectedHands.length === 1)} onClick={() => toggleHand('left')}>Left <span id="registrationLeftCount">{leftCount}/5</span></button>
+                  <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="registrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} disabled={handToggleLocked || (selectedHands.includes('right') && selectedHands.length === 1)} onClick={() => toggleHand('right')}>Right <span id="registrationRightCount">{rightCount}/5</span></button>
                 </div>
                 <div className="sample-title" id="regSampleTitle">{sampleTitle}</div>
                 <div className="sample-desc" id="regSampleDesc">{sampleDesc}</div>
@@ -454,7 +463,7 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
                     </div>
                   ))}
                 </div>
-                <div className={`registration-quality-line ${error ? 'bad' : active ? 'warn' : 'neutral'}`} id="registrationQualityLine">{error || registrationQualityLine}</div>
+                <div className={`registration-quality-line ${registrationQualityClass}`} id="registrationQualityLine">{error || registrationQualityLine}</div>
               </div>
 
               <div className="register-hint" id="registerHint">{message}</div>
@@ -468,17 +477,19 @@ export function RegisterPanel({ active: panelActive }: RegisterPanelProps) {
 
             <div className={`registration-mode-panel dev-only${registrationMode === 'upload' ? ' active' : ''}`} id="uploadRegistrationPanel" data-registration-mode-panel="upload" role="tabpanel" aria-labelledby="uploadRegistrationTab" hidden={!devFeatures}>
               <div className="registration-hand-select upload-hand-select" aria-label="Hands to upload">
-                <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="uploadRegistrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} onClick={() => toggleHand('left')}>Left <span id="uploadRegistrationLeftCount">{uploadLeftCount}/5</span></button>
-                <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="uploadRegistrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} onClick={() => toggleHand('right')}>Right <span id="uploadRegistrationRightCount">{uploadRightCount}/5</span></button>
+                <button className={`registration-hand-chip${selectedHands.includes('left') ? ' active' : ''}`} id="uploadRegistrationLeftHand" type="button" data-hand-toggle="left" aria-pressed={selectedHands.includes('left')} disabled={handToggleLocked || (selectedHands.includes('left') && selectedHands.length === 1)} onClick={() => toggleHand('left')}>Left <span id="uploadRegistrationLeftCount">{uploadLeftCount}/5</span></button>
+                <button className={`registration-hand-chip${selectedHands.includes('right') ? ' active' : ''}`} id="uploadRegistrationRightHand" type="button" data-hand-toggle="right" aria-pressed={selectedHands.includes('right')} disabled={handToggleLocked || (selectedHands.includes('right') && selectedHands.length === 1)} onClick={() => toggleHand('right')}>Right <span id="uploadRegistrationRightCount">{uploadRightCount}/5</span></button>
               </div>
               <div className="upload-registration-grid">
                 {ALL_HANDS.map((hand) => {
+                  const selected = selectedHands.includes(hand)
                   const files = Array.from(uploadFiles[hand] ?? [])
+                  const uploadDisabled = busyAction === 'upload' || !selected
                   return (
-                    <div key={hand} className={`upload-picker${files.length === REGISTRATION_CAPTURES_PER_HAND ? ' ok' : files.length ? ' bad' : ''}`} id={hand === 'left' ? 'uploadLeftPicker' : 'uploadRightPicker'}>
+                    <div key={hand} className={`upload-picker${files.length === REGISTRATION_CAPTURES_PER_HAND ? ' ok' : files.length ? ' bad' : ''}${uploadDisabled ? ' disabled' : ''}`} id={hand === 'left' ? 'uploadLeftPicker' : 'uploadRightPicker'}>
                       <div className="upload-picker-head"><strong>{hand[0].toUpperCase() + hand.slice(1)} hand photos</strong><span className="upload-count" id={hand === 'left' ? 'uploadLeftCount' : 'uploadRightCount'}>{files.length}/5</span></div>
                       <label className="upload-file-label" htmlFor={hand === 'left' ? 'uploadLeftFiles' : 'uploadRightFiles'}>
-                        <input className="upload-file-input" id={hand === 'left' ? 'uploadLeftFiles' : 'uploadRightFiles'} type="file" accept="image/*" multiple disabled={busyAction === 'upload'} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles((current) => ({ ...current, [hand]: event.target.files }))} />
+                        <input className="upload-file-input" id={hand === 'left' ? 'uploadLeftFiles' : 'uploadRightFiles'} type="file" accept="image/*" multiple disabled={uploadDisabled} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles((current) => ({ ...current, [hand]: event.target.files }))} />
                         <span>Select exactly 5 full-hand photos</span>
                       </label>
                       <div className="upload-file-list" id={hand === 'left' ? 'uploadLeftList' : 'uploadRightList'}>{files.length ? files.map((file) => file.name).join(', ') : 'No files selected.'}</div>

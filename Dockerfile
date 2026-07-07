@@ -2,7 +2,7 @@
 # python:3.11-slim-bookworm (Debian bookworm) gives us glibc so MediaPipe wheels work.
 FROM python:3.11-slim-bookworm AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.27 /uv /uvx /bin/
 
 # System libraries needed by MediaPipe and OpenCV on a headless Debian image
 RUN apt-get update && apt-get install -y --no-install-recommends \

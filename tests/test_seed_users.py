@@ -258,6 +258,24 @@ def test_seed_script_exposes_auto_demo_nim_flag():
     assert "auto_demo_nim=args.auto_demo_nim" in source
 
 
+def test_seed_script_rejects_auto_demo_nim_with_system_register_layout():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "seed_users.py"),
+            "seeds",
+            "--auto-demo-nim",
+            "--system-register-layout",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "--auto-demo-nim cannot be used with --system-register-layout" in result.stderr
+
+
 def test_system_register_layout_creates_one_user_per_hand_with_stable_nims(tmp_path):
     from app.services.seed_users import seed_system_register_users_from_directory
 

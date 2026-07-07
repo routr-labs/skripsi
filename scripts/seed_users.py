@@ -26,6 +26,8 @@ def main():
         help="Import folders named '<name>_L'/'<name>_R' as separate left/right users with NIMs like 1-L and 1-R.",
     )
     args = parser.parse_args()
+    if args.system_register_layout and args.auto_demo_nim:
+        parser.error("--auto-demo-nim cannot be used with --system-register-layout")
 
     db = Database(args.db)
     palm_processor = PalmProcessor()

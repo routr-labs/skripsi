@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AccessLog, apiJson, buildQuery } from '../lib/api'
 import { emptyLogFilters, nextLogFilters } from '../lib/logFilters'
@@ -12,12 +12,15 @@ type LogPanelProps = {
 
 export function LogPanel({ active, refreshKey = 0 }: LogPanelProps) {
   const [filters, setFilters] = useState(emptyLogFilters)
+  const [searchQ, setSearchQ] = useState(emptyLogFilters.q)
   const [rows, setRows] = useState<AccessLog[]>([])
   const [count, setCount] = useState(0)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
+  const latestRequestRef = useRef(0)
 
   const loadLogs = useCallback(async () => {
+    const requestId = ++latestRequestRef.current
     setBusy(true)
     setError('')
     try {
@@ -33,14 +36,23 @@ export function LogPanel({ active, refreshKey = 0 }: LogPanelProps) {
         apiJson<AccessLog[]>(`/api/logs${buildQuery(params)}`),
         apiJson<{ count: number }>(`/api/logs/count${buildQuery(params)}`),
       ])
+      if (requestId !== latestRequestRef.current) return
       setRows(nextRows)
       setCount(nextCount.count)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load logs')
+      if (requestId === latestRequestRef.current) setError(err instanceof Error ? err.message : 'Failed to load logs')
     } finally {
-      setBusy(false)
+      if (requestId === latestRequestRef.current) setBusy(false)
     }
   }, [filters])
+
+  useEffect(() => {
+    if (searchQ === filters.q) return
+    const id = window.setTimeout(() => {
+      setFilters((current) => nextLogFilters(current, { q: searchQ }))
+    }, 300)
+    return () => window.clearTimeout(id)
+  }, [searchQ, filters.q])
 
   useEffect(() => {
     void loadLogs()
@@ -75,8 +87,8 @@ export function LogPanel({ active, refreshKey = 0 }: LogPanelProps) {
           className="field-input"
           type="search"
           placeholder="Search logs…"
-          value={filters.q}
-          onChange={(event) => setFilters((current) => nextLogFilters(current, { q: event.target.value }))}
+          value={searchQ}
+          onChange={(event) => setSearchQ(event.target.value)}
         />
         <select
           className="field-input"
@@ -101,7 +113,7 @@ export function LogPanel({ active, refreshKey = 0 }: LogPanelProps) {
           value={filters.endDate}
           onChange={(event) => setFilters((current) => nextLogFilters(current, { endDate: event.target.value }))}
         />
-        <button className="btn btn-ghost" type="button" onClick={() => setFilters(emptyLogFilters)}>
+        <button className="btn btn-ghost" type="button" onClick={() => { setSearchQ(''); setFilters(emptyLogFilters) }}>
           Clear
         </button>
       </div>

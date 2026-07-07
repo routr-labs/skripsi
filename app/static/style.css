@@ -871,59 +871,6 @@ body {
   background: var(--surface-alt);
 }
 
-.sample-title {
-  font-weight: 700;
-  color: var(--text-1);
-  margin-bottom: 6px;
-}
-
-.sample-desc {
-  color: var(--text-2);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-.capture-counter-inline {
-  margin-top: 10px;
-  font-size: 0.85rem;
-  color: var(--text-2);
-}
-
-.capture-counter-inline strong {
-  font-family: var(--font-mono);
-  color: var(--accent);
-}
-
-.quality-list {
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 6px;
-}
-
-.quality-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.82rem;
-  color: var(--text-2);
-}
-
-.quality-list strong {
-  font-size: 0.75rem;
-}
-
-.quality-list em {
-  color: var(--text-3);
-  font-size: 0.68rem;
-  font-style: normal;
-}
-
-.quality-list .ok { color: var(--success); }
-.quality-list .bad { color: var(--error); }
-.quality-list .warn { color: var(--accent); }
-
 .usb-registration-preview-frame {
   margin-bottom: 16px;
 }
@@ -1214,19 +1161,6 @@ body {
 .btn-danger:hover:not(:disabled) {
   opacity: 0.88;
   box-shadow: 0 4px 12px oklch(50% 0.20 22 / 0.25);
-}
-
-/* ──────────────────────────────────────────
-   REGISTER ACTIONS ROW
-────────────────────────────────────────── */
-.register-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.register-actions .btn-register {
-  flex: 1;
-  margin-top: 0;
 }
 
 .btn-reset-captures {

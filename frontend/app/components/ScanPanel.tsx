@@ -75,6 +75,7 @@ export function ScanPanel({ active }: ScanPanelProps) {
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null)
   const [roiImage, setRoiImage] = useState('')
   const [stats, setStats] = useState({ total: 0, allowed: 0, denied: 0, users: 0 })
+  const [appVersion, setAppVersion] = useState('local')
 
   autoModeRef.current = autoMode
   busyRef.current = busy
@@ -125,6 +126,7 @@ export function ScanPanel({ active }: ScanPanelProps) {
         const usb = data.app?.camera_source === 'usb'
         setUsbDeviceMode(usb)
         setDevFeatures(data.app?.dev_features === true)
+        setAppVersion(data.app?.version ?? 'local')
         setStats((current) => ({ ...current, users: data.users?.total ?? current.users }))
         if (usb) {
           eventsRef.current = new EventSource('/api/device-registration/scan-events')
@@ -138,8 +140,13 @@ export function ScanPanel({ active }: ScanPanelProps) {
           }
         } else {
           const { handLandmarker } = await createHandLandmarker()
+          if (cancelled) {
+            handLandmarker.close?.()
+            return
+          }
           handLandmarkerRef.current = handLandmarker
           await startCamera()
+          if (cancelled) return
           rafRef.current = requestAnimationFrame(detectLoop)
         }
       } catch (err) {
@@ -152,6 +159,8 @@ export function ScanPanel({ active }: ScanPanelProps) {
       cancelled = true
       eventsRef.current?.close()
       streamRef.current?.getTracks().forEach((track) => track.stop())
+      handLandmarkerRef.current?.close?.()
+      handLandmarkerRef.current = null
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     }
   }, [])
@@ -328,7 +337,7 @@ export function ScanPanel({ active }: ScanPanelProps) {
           </div>
 
           <div className="device-status-card" id="deviceStatusCard">
-            <div className="device-status-row"><span>Version</span><strong id="appVersion">local</strong></div>
+            <div className="device-status-row"><span>Version</span><strong id="appVersion">{appVersion}</strong></div>
             <div className="device-status-row"><span>Worker</span><strong id="deviceWorkerState">{usbDeviceMode ? 'enabled' : 'disabled'}</strong></div>
             <div className="device-status-row"><span>Camera</span><strong id="deviceCameraState">{error ? 'offline' : 'online'}</strong></div>
             <div className="device-status-row"><span>FPS</span><strong id="deviceFps">—</strong></div>

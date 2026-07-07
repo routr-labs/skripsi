@@ -2,6 +2,7 @@ import os
 import tempfile
 import numpy as np
 import pytest
+import app.database as database
 from app.database import Database
 
 
@@ -143,12 +144,8 @@ def test_duplicate_nim_is_rejected(db):
 
     db.add_user("Alice", emb, nim="12345")
 
-    try:
+    with pytest.raises(database.DuplicateNimError, match="NIM already exists"):
         db.add_user("Bob", emb, nim="12345")
-    except ValueError as exc:
-        assert "NIM already exists" in str(exc)
-    else:
-        raise AssertionError("Expected duplicate NIM to be rejected")
 
 
 def test_delete_user(db):
@@ -223,10 +220,10 @@ def test_update_user_rejects_empty_values(db):
     emb = np.ones(4, dtype=np.float32)
     user_id = db.add_user("Alice", emb, nim="001")
 
-    with pytest.raises(ValueError, match="NIM is required"):
+    with pytest.raises(database.UserValidationError, match="NIM is required"):
         db.update_user(user_id, nim=" ", name="Alice")
 
-    with pytest.raises(ValueError, match="Name is required"):
+    with pytest.raises(database.UserValidationError, match="Name is required"):
         db.update_user(user_id, nim="001", name=" ")
 
 
@@ -235,7 +232,7 @@ def test_update_user_rejects_duplicate_nim(db):
     db.add_user("Alice", emb, nim="001")
     bob_id = db.add_user("Bob", emb, nim="002")
 
-    with pytest.raises(ValueError, match="NIM already exists"):
+    with pytest.raises(database.DuplicateNimError, match="NIM already exists"):
         db.update_user(bob_id, nim="001", name="Bob")
 
 

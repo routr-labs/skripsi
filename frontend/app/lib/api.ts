@@ -40,7 +40,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await response.json()
       if (body?.detail) message = body.detail
     } catch {
-      // ponytail: plain status is enough when the API does not return JSON.
+      // Plain status is enough when the API does not return JSON.
     }
     throw new Error(message)
   }

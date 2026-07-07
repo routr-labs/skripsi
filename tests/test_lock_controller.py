@@ -1,3 +1,6 @@
+import pytest
+
+
 def _fake_gpiod(events):
     class FakeValue:
         ACTIVE = "active"
@@ -85,12 +88,8 @@ def test_gpio_lock_controller_turns_relay_off_if_sleep_fails():
         sleep=fail_sleep,
     )
 
-    try:
+    with pytest.raises(RuntimeError, match="sleep failed"):
         controller.unlock()
-    except RuntimeError as exc:
-        assert "sleep failed" in str(exc)
-    else:
-        raise AssertionError("Expected sleep failure")
 
     assert events[-2:] == [
         ("set", "PC11", "inactive"),

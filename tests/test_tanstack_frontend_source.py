@@ -38,6 +38,35 @@ def test_log_panel_uses_filter_count_and_export_endpoints():
     assert "/api/logs/export.csv" in source
     assert "type=\"date\"" in source
     assert "nextLogFilters" in source
+    assert "latestRequestRef" in source
+    assert "setTimeout" in source
+
+
+def test_frontend_config_uses_builtin_vite_proxy_and_exact_nitro():
+    vite_config = (FRONTEND / "vite.config.ts").read_text()
+    package_json = (FRONTEND / "package.json").read_text()
+
+    assert "proxy:" in vite_config
+    assert "palmgateApiProxy" not in vite_config
+    assert '"nitro": "3.0.260311-beta"' in package_json
+
+
+def test_register_panel_handles_usb_polling_cancel_and_disabled_states():
+    source = (FRONTEND / "app" / "components" / "RegisterPanel.tsx").read_text()
+
+    assert "refreshUsbStatus().catch" in source
+    assert "USB status refresh failed" in source
+    assert "Cancel failed" in source
+    assert "upload-picker" in source and "disabled" in source
+    assert "registrationQualityClass" in source
+
+
+def test_scan_panel_uses_backend_version_and_closes_hand_landmarker():
+    source = (FRONTEND / "app" / "components" / "ScanPanel.tsx").read_text()
+
+    assert "setAppVersion(data.app?.version" in source
+    assert "handLandmarker.close" in source
+    assert "id=\"appVersion\">{appVersion}" in source
 
 
 def test_user_list_uses_edit_and_delete_endpoints_with_typed_nim_guard():

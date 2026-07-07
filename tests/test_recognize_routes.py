@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 
@@ -27,17 +28,40 @@ def test_encode_roi_image_logs_warning_when_imencode_fails(monkeypatch, caplog):
     assert "ROI preview encoding failed" in caplog.text
 
 
-def test_recognize_full_frame_uses_notebook_embedding(monkeypatch):
+def test_save_debug_images_runs_disk_writes_in_thread(monkeypatch, tmp_path):
+    import app.routes.recognize as recognize_route
+
+    calls = []
+
+    async def fake_to_thread(func, *args, **kwargs):
+        calls.append(func.__name__)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(recognize_route, "RECOGNITION_DEBUG_DIR", tmp_path)
+    monkeypatch.setattr(recognize_route.asyncio, "to_thread", fake_to_thread)
+
+    paths = asyncio.run(recognize_route.save_debug_images(
+        np.zeros((20, 30, 3), dtype=np.uint8),
+        np.full((224, 224, 3), 128, dtype=np.uint8),
+        "camera",
+    ))
+
+    assert calls == ["_write_debug_images"]
+    assert paths["frame"].endswith("_camera_frame.jpg")
+    assert paths["roi"].endswith("_camera_roi.jpg")
+
+
+def test_recognize_full_frame_uses_processed_roi_embedding(monkeypatch):
     import app.main as main
 
     class FakeProcessor:
         def __init__(self):
-            self.used_notebook = False
+            self.used_processed_roi = False
 
-        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
-            self.used_notebook = True
+        def get_embedding_with_processed_roi(self, frame, tta_enabled=False):
+            self.used_processed_roi = True
             self.tta_enabled = tta_enabled
-            return np.ones(4, dtype=np.float32)
+            return np.ones(4, dtype=np.float32), np.zeros((2, 2, 3), dtype=np.uint8)
 
         def compute_similarity(self, embedding, stored, threshold):
             return {
@@ -63,7 +87,7 @@ def test_recognize_full_frame_uses_notebook_embedding(monkeypatch):
     response = client.post("/api/recognize", json={"image": encoded_image(), "is_roi": False})
 
     assert response.status_code == 200
-    assert processor.used_notebook is True
+    assert processor.used_processed_roi is True
 
 
 def test_recognize_uses_recognition_tta_flag(monkeypatch):
@@ -74,9 +98,9 @@ def test_recognize_uses_recognition_tta_flag(monkeypatch):
         def __init__(self):
             self.tta_enabled = None
 
-        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
+        def get_embedding_with_processed_roi(self, frame, tta_enabled=False):
             self.tta_enabled = tta_enabled
-            return np.ones(4, dtype=np.float32)
+            return np.ones(4, dtype=np.float32), np.zeros((2, 2, 3), dtype=np.uint8)
 
         def compute_similarity(self, embedding, stored, threshold):
             return {"status": "DENIED", "name": "Unknown", "similarity": 0.1, "closest_match": None, "user_id": None}
@@ -178,13 +202,44 @@ def test_recognize_saves_debug_frame_and_roi_in_dev_debug_mode(monkeypatch, tmp_
     assert cv2.imread(paths["roi"]).shape[:2] == (224, 224)
 
 
+def test_recognize_discards_processed_roi_when_debug_roi_is_disabled(monkeypatch):
+    import app.main as main
+    import app.routes.recognize as recognize_route
+
+    class FakeProcessor:
+        def get_embedding_with_processed_roi(self, frame, tta_enabled=False):
+            return np.ones(4, dtype=np.float32), np.full((224, 224, 3), 128, dtype=np.uint8)
+
+        def compute_similarity(self, embedding, stored, threshold):
+            return {"status": "DENIED", "name": "Unknown", "similarity": 0.1, "closest_match": None, "user_id": None}
+
+    class FakeDB:
+        def get_all_embeddings(self):
+            return []
+
+        def add_access_log(self, *args, **kwargs):
+            pass
+
+    fake_processor = FakeProcessor()
+    monkeypatch.setattr(main, "palm_processor", fake_processor)
+    monkeypatch.setattr(main, "db", FakeDB())
+    monkeypatch.setattr(recognize_route, "DEV_FEATURES_ENABLED", True)
+    monkeypatch.setattr(recognize_route, "decode_base64_image", lambda image: np.zeros((20, 20, 3), dtype=np.uint8))
+
+    client = TestClient(app)
+    response = client.post("/api/recognize", json={"image": "img", "debug_roi": False})
+
+    assert response.status_code == 200
+    assert "roi_image" not in response.json()
+
+
 def test_recognize_does_not_return_roi_image_in_production(monkeypatch):
     import app.main as main
     import app.routes.recognize as recognize_route
 
     class FakeProcessor:
-        def get_embedding_from_notebook_frame(self, frame, tta_enabled=False):
-            return np.ones(4, dtype=np.float32)
+        def get_embedding_with_processed_roi(self, frame, tta_enabled=False):
+            return np.ones(4, dtype=np.float32), np.zeros((2, 2, 3), dtype=np.uint8)
 
         def compute_similarity(self, embedding, stored, threshold):
             return {"status": "DENIED", "name": "Unknown", "similarity": 0.1, "closest_match": None, "user_id": None}

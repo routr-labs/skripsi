@@ -3,6 +3,14 @@ import numpy as np
 from pathlib import Path
 
 
+class UserValidationError(ValueError):
+    pass
+
+
+class DuplicateNimError(ValueError):
+    pass
+
+
 class Database:
     def __init__(self, db_path: "str | Path"):
         self.db_path = str(db_path)
@@ -94,9 +102,9 @@ class Database:
         clean_nim = nim.strip()
         clean_name = name.strip()
         if not clean_nim:
-            raise ValueError("NIM is required")
+            raise UserValidationError("NIM is required")
         if not clean_name:
-            raise ValueError("Name is required")
+            raise UserValidationError("Name is required")
 
         individual_rows = []
         if individual_embeddings:
@@ -121,7 +129,7 @@ class Database:
         except sqlite3.IntegrityError as exc:
             self.conn.rollback()
             if "users.nim" in str(exc) or "idx_users_nim" in str(exc) or "UNIQUE" in str(exc):
-                raise ValueError("NIM already exists") from exc
+                raise DuplicateNimError("NIM already exists") from exc
             raise
         except Exception:
             self.conn.rollback()
@@ -140,26 +148,27 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def update_user(self, user_id: int, *, nim: str, name: str) -> dict | None:
-        clean_nim = nim.strip()
-        clean_name = name.strip()
-        if not clean_nim:
-            raise ValueError("NIM is required")
-        if not clean_name:
-            raise ValueError("Name is required")
-        if self.get_user(user_id) is None:
-            return None
+    def update_user(self, user_id: int, *, nim: str | None = None, name: str | None = None) -> dict | None:
+        clean_nim = nim.strip() if nim is not None else None
+        clean_name = name.strip() if name is not None else None
+        if nim is not None and not clean_nim:
+            raise UserValidationError("NIM is required")
+        if name is not None and not clean_name:
+            raise UserValidationError("Name is required")
 
         try:
-            self.conn.execute(
-                "UPDATE users SET nim = ?, name = ? WHERE id = ?",
+            cursor = self.conn.execute(
+                "UPDATE users SET nim = COALESCE(?, nim), name = COALESCE(?, name) WHERE id = ?",
                 (clean_nim, clean_name, user_id),
             )
+            if cursor.rowcount == 0:
+                self.conn.rollback()
+                return None
             self.conn.commit()
         except sqlite3.IntegrityError as exc:
             self.conn.rollback()
             if "users.nim" in str(exc) or "idx_users_nim" in str(exc) or "UNIQUE" in str(exc):
-                raise ValueError("NIM already exists") from exc
+                raise DuplicateNimError("NIM already exists") from exc
             raise
         except Exception:
             self.conn.rollback()

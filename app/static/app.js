@@ -954,7 +954,7 @@ function updateRegistrationUI() {
     const hand = chip.dataset.handToggle;
     const selected = state.selectedHands.includes(hand);
     chip.classList.toggle('active', selected);
-    chip.disabled = state.registrationActive || state.uploadBusy || (!selected && selectedRegistrationHands().length === REGISTRATION_HANDS.length);
+    chip.disabled = state.registrationActive || state.uploadBusy || (selected && selectedRegistrationHands().length === 1);
     chip.setAttribute('aria-pressed', String(selected));
   });
 
